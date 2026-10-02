@@ -1,7 +1,7 @@
-import { detectText, hasCjk, OCR_MODES } from './ocr.js';
+import { detectText } from './ocr.js';
 import { t, applyI18n, setLang, getLang, LANGS } from './i18n.js';
 import {
-  fileToCanvas, urlToCanvas, cloneCanvas, eraseBox, estimateTextColor, canvasToBlob,
+  fileToCanvas, urlToCanvas, cloneCanvas, eraseText, estimateTextColor, canvasToBlob, inkBounds,
 } from './imaging.js';
 import { FONTS, DEFAULT_FAMILY, ensureFontsLoaded, normalizeWeight } from './fonts.js';
 import {
@@ -12,7 +12,7 @@ import {
 } from './storage.js';
 
 // Custom properties saved with each text object.
-const EXTRA_PROPS = ['vertical', 'ocr'];
+const EXTRA_PROPS = ['vertical', 'ocr', 'fitBox', 'autoFit'];
 const $ = (sel) => document.querySelector(sel);
 
 const state = {
@@ -94,7 +94,7 @@ function refreshEnabled() {
   $('#emptyState').hidden = on;
   $('#canvasWrap').hidden = !on;
   $('#detectBtn').disabled = !state.original;
-  $('#showOriginal').disabled = !state.original;
+  $('#compareBtn').hidden = !state.original;
   $('#undoEraseBtn').disabled = !state.eraseUndo.length;
 }
 
@@ -108,6 +108,9 @@ function setBackground(el) {
   canvas.requestRenderAll();
 }
 
+const ZOOM_MIN = 0.05;
+const ZOOM_MAX = 6;
+
 function applyZoom() {
   if (!hasDoc()) return;
   const W = canvas.getWidth();
@@ -117,10 +120,95 @@ function applyZoom() {
     const stage = $('#stage');
     z = Math.min(1, (stage.clientWidth - 32) / W, (stage.clientHeight - 32) / H);
   }
-  z = Math.max(0.05, z);
+  z = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
   canvas.setDimensions({ width: `${W * z}px`, height: `${H * z}px` }, { cssOnly: true });
   canvas.calcOffset();
+  syncZoomSelect(z);
+  positionQuickEdit();
 }
+
+const currentZoom = () => canvas.upperCanvasEl.getBoundingClientRect().width / canvas.getWidth();
+
+/** Show free zoom levels (from pinching) in the Zoom menu as e.g. "135%". */
+function syncZoomSelect(z) {
+  const sel = $('#zoom');
+  let custom = sel.querySelector('option[data-custom]');
+  if (state.zoom === 'fit' || [...sel.options].some((o) => !o.dataset.custom && o.value === String(state.zoom))) {
+    custom?.remove();
+    sel.value = String(state.zoom);
+    return;
+  }
+  if (!custom) {
+    custom = new Option('', '');
+    custom.dataset.custom = '1';
+    sel.append(custom);
+  }
+  custom.value = String(state.zoom);
+  custom.textContent = `${Math.round(z * 100)}%`;
+  sel.value = custom.value;
+}
+
+/** Zoom to z while keeping the point under (clientX, clientY) in place. */
+function zoomAround(z, clientX, clientY) {
+  const stage = $('#stage');
+  const before = $('#canvasWrap').getBoundingClientRect();
+  const fx = (clientX - before.left) / before.width;
+  const fy = (clientY - before.top) / before.height;
+  state.zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+  applyZoom();
+  const after = $('#canvasWrap').getBoundingClientRect();
+  stage.scrollLeft += after.left + fx * after.width - clientX;
+  stage.scrollTop += after.top + fy * after.height - clientY;
+}
+
+// Two-finger pinch zooms and pans the photo; one finger still edits.
+// While two fingers are down, their pointer events are kept from Fabric so a
+// pinch doesn't also drag a text box; the final pointerup is let through so
+// Fabric finishes cleanly.
+(() => {
+  const stage = $('#stage');
+  const touches = new Set();
+  let pinch = null;
+  const pts = (e) => [...e.touches].slice(0, 2).map((t) => ({ x: t.clientX, y: t.clientY }));
+  const dist = ([a, b]) => Math.hypot(a.x - b.x, a.y - b.y);
+  const mid = ([a, b]) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  window.addEventListener('pointerdown', (e) => { if (e.pointerType === 'touch' && stage.contains(e.target)) touches.add(e.pointerId); }, true);
+  const release = (e) => {
+    if (e.pointerType !== 'touch') return;
+    touches.delete(e.pointerId);
+    if (pinch && touches.size) e.stopPropagation();
+  };
+  window.addEventListener('pointerup', release, true);
+  window.addEventListener('pointercancel', release, true);
+  window.addEventListener('pointermove', (e) => { if (pinch && e.pointerType === 'touch') e.stopPropagation(); }, true);
+  window.addEventListener('pointerdown', (e) => { if (pinch && e.pointerType === 'touch') e.stopPropagation(); }, true);
+  stage.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 2 || !hasDoc()) return;
+    e.preventDefault();
+    const p = pts(e);
+    pinch = { z0: currentZoom(), d0: dist(p), m: mid(p) };
+    canvas.discardActiveObject();
+    canvas.requestRenderAll();
+  }, { passive: false, capture: true });
+  stage.addEventListener('touchmove', (e) => {
+    if (!pinch || e.touches.length < 2) return;
+    e.preventDefault();
+    const p = pts(e);
+    const m = mid(p);
+    stage.scrollLeft -= m.x - pinch.m.x;
+    stage.scrollTop -= m.y - pinch.m.y;
+    pinch.m = m;
+    zoomAround(pinch.z0 * (dist(p) / pinch.d0), m.x, m.y);
+  }, { passive: false, capture: true });
+  stage.addEventListener('touchend', (e) => { if (e.touches.length < 2) pinch = null; }, { capture: true });
+  stage.addEventListener('touchcancel', () => { pinch = null; }, { capture: true });
+  // Trackpad pinch (sent as ctrl+wheel) and Ctrl/⌘ + mouse wheel.
+  stage.addEventListener('wheel', (e) => {
+    if (!(e.ctrlKey || e.metaKey) || !hasDoc()) return;
+    e.preventDefault();
+    zoomAround(currentZoom() * Math.exp(-e.deltaY * 0.01), e.clientX, e.clientY);
+  }, { passive: false });
+})();
 new ResizeObserver(() => state.zoom === 'fit' && applyZoom()).observe($('#stage'));
 
 function resetCanvas(w, h) {
@@ -185,9 +273,14 @@ async function redo() {
 let textChangeTimer;
 canvas.on('object:added', () => { pushHistory(); renderLayers(); });
 canvas.on('object:removed', () => { pushHistory(); renderLayers(); });
-canvas.on('object:modified', () => { pushHistory(); renderProps(); });
+canvas.on('object:modified', (e) => {
+  // Moving or resizing a box by hand means the user is placing it themselves.
+  e.target?.set('autoFit', false);
+  pushHistory();
+  renderProps();
+});
 canvas.on('text:changed', (e) => {
-  ensureFontsLoaded([e.target]).then(() => canvas.requestRenderAll());
+  ensureFontsLoaded([e.target]).then(() => { refitIfAuto(e.target); canvas.requestRenderAll(); });
   clearTimeout(textChangeTimer);
   textChangeTimer = setTimeout(() => { pushHistory(); renderLayers(); renderProps(); }, 400);
 });
@@ -215,64 +308,202 @@ function newText(text, opts = {}) {
 const toVertical = (text) => [...text.replace(/\s+/g, '')].join('\n');
 const fromVertical = (text) => text.replace(/\n/g, '');
 
-/** Turn an OCR line into a text object sized and placed over the original. */
+// Fabric draws a one-line text's baseline this far below the box top, as a
+// fraction of the font size: line height 1.13 × (1 − 0.222). See Fabric's
+// Text._renderTextCommon / _renderChars (_fontSizeMult, _fontSizeFraction).
+const BASELINE = 1.13 * (1 - 0.222);
+const measureCtx = document.createElement('canvas').getContext('2d');
+
+/** Ink box of `text` in the editor font at 100 px (letter shapes, not the em box). */
+function inkAt100(text, o) {
+  measureCtx.font = `${normalizeWeight(o.fontWeight)} 100px "${o.fontFamily}"`;
+  const m = measureCtx.measureText(text);
+  return {
+    left: m.actualBoundingBoxLeft, // distance the ink starts left of the pen (negative = right)
+    width: m.actualBoundingBoxLeft + m.actualBoundingBoxRight,
+    ascent: m.actualBoundingBoxAscent,
+    height: m.actualBoundingBoxAscent + m.actualBoundingBoxDescent,
+  };
+}
+
+/** Share of the letter box that `text` covers when drawn in the editor font at this weight. */
+function inkDensity(text, family, weight, fs) {
+  const c = document.createElement('canvas');
+  measureCtx.font = `${weight} ${fs}px "${family}"`;
+  const m = measureCtx.measureText(text);
+  const w = Math.ceil(m.actualBoundingBoxLeft + m.actualBoundingBoxRight) + 2;
+  const h = Math.ceil(m.actualBoundingBoxAscent + m.actualBoundingBoxDescent) + 2;
+  if (w < 3 || h < 3) return 0;
+  c.width = w; c.height = h;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.font = measureCtx.font;
+  g.fillText(text, m.actualBoundingBoxLeft + 1, m.actualBoundingBoxAscent + 1);
+  const { data } = g.getImageData(0, 0, w, h);
+  let ink = 0;
+  for (let i = 3; i < data.length; i += 4) if (data[i] > 127) ink++;
+  return ink / (w * h);
+}
+
+/**
+ * Bold or regular? Compare how much of the letter box the original's strokes
+ * cover with how much Noto's regular and bold weights cover for the same text,
+ * and pick the closer one.
+ */
+function guessWeight(text, family, fs, photoDensity) {
+  if (!photoDensity || fs < 8) return 400;
+  const regular = inkDensity(text, family, 400, fs);
+  const bold = inkDensity(text, family, 700, fs);
+  if (!regular || !bold) return 400;
+  return Math.abs(photoDensity - bold) < Math.abs(photoDensity - regular) ? 700 : 400;
+}
+
+/** Put a one-line text's letters (ink) centred on (cx, cy) at font size fs, and remember where they are. */
+function placeInk(o, ink, fs, cx, cy) {
+  const k = fs / 100;
+  o.set({ fontSize: fs });
+  o.initDimensions();
+  const n = [...o.text].length;
+  const inkW = ink.width * k + (n > 1 ? ((n - 1) * (o.charSpacing || 0) * fs) / 1000 : 0);
+  const inkH = ink.height * k;
+  const inkLeft = cx - inkW / 2;
+  const inkTop = cy - inkH / 2;
+  o.set({ left: inkLeft + ink.left * k, top: inkTop - (BASELINE * fs - ink.ascent * k) });
+  o.setCoords();
+  o.ink = ink;
+  o.inkBox = { x0: inkLeft, y0: inkTop, x1: inkLeft + inkW, y1: inkTop + inkH };
+}
+
+/**
+ * Display lettering in posters often overlaps its neighbours by design; the
+ * same sizes in a regular font collide. Where two converted lines would touch,
+ * shrink the larger one around its centre until they no longer touch.
+ */
+function separateLines(objs) {
+  const items = objs.filter((o) => o.inkBox && o.ink);
+  for (let round = 0; round < 40; round++) {
+    let changed = false;
+    for (let i = 0; i < items.length; i++) {
+      for (let j = i + 1; j < items.length; j++) {
+        const A = items[i].inkBox;
+        const B = items[j].inkBox;
+        const gap = 0.04 * Math.min(A.y1 - A.y0, B.y1 - B.y0);
+        const ox = Math.min(A.x1, B.x1) - Math.max(A.x0, B.x0) + gap;
+        const oy = Math.min(A.y1, B.y1) - Math.max(A.y0, B.y0) + gap;
+        if (ox <= 0 || oy <= 0) continue;
+        const big = items[i].fontSize >= items[j].fontSize ? items[i] : items[j];
+        if (big.fontSize <= 8) continue;
+        const bb = big.inkBox;
+        placeInk(big, big.ink, big.fontSize * 0.95, (bb.x0 + bb.x1) / 2, (bb.y0 + bb.y1) / 2);
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+}
+
+/**
+ * Turn an OCR line into a text object whose letters cover the original's:
+ * the font size makes the letter height match, letter spacing makes the
+ * line width match, and the box is placed so the letter shapes (not the
+ * em box) line up with where the original letters were.
+ */
 function textFromLine(line, color) {
   const { x0, y0, x1, y1 } = line.bbox;
   const bw = x1 - x0;
   const bh = y1 - y0;
   if (line.vertical) {
     const chars = [...line.text.replace(/\s+/g, '')];
-    const fs = bw / 0.92;
-    const lh = Math.min(1.6, Math.max(0.8, bh / (chars.length * fs * 1.13)));
     return {
-      obj: newText(chars.join('\n'), {
-        fontSize: fs, fill: color, lineHeight: lh, textAlign: 'center', vertical: true, ocr: true,
-      }),
-      fit: (o) => o.set({ left: x0 + bw / 2 - o.width / 2, top: y0 + bh / 2 - o.height / 2 }),
+      obj: newText(chars.join('\n'), { fontSize: bw, fill: color, textAlign: 'center', vertical: true, ocr: true }),
+      fit: (o) => {
+        const widest = Math.max(...chars.map((c) => inkAt100(c, o).width), 1);
+        const fs = Math.min(2000, Math.max(6, (bw * 100) / widest));
+        const first = inkAt100(chars[0], o);
+        const last = inkAt100(chars[chars.length - 1], o);
+        const k = fs / 100;
+        const span = bh - (first.ascent + (last.height - last.ascent)) * k; // first ink top → last baseline
+        const lh = chars.length > 1 ? Math.min(3, Math.max(0.6, span / ((chars.length - 1) * 1.13 * fs))) : 1;
+        o.set({ fontSize: fs, lineHeight: lh });
+        o.initDimensions();
+        o.set({ left: x0 + bw / 2 - o.width / 2, top: y0 - (BASELINE * fs - first.ascent * k) });
+        o.setCoords();
+      },
     };
   }
-  // CJK glyphs fill ~92% of the em box; Latin ink is shorter.
-  const fs = bh / (hasCjk(line.text) ? 0.92 : 0.75);
   return {
-    obj: newText(line.text, { fontSize: fs, fill: color, ocr: true }),
+    obj: newText(line.text, { fontSize: bh, fill: color, ocr: true }),
     fit: (o) => {
-      // Width is the more reliable signal once the real font is measured.
-      if (o.width > 0 && [...line.text].length > 1) {
-        const byWidth = o.fontSize * (bw / o.width);
-        o.set('fontSize', Math.min(fs * 1.4, Math.max(fs * 0.7, byWidth)));
-        o.initDimensions();
+      if (line.bbox.density) {
+        const approx = (bh * 100) / Math.max(inkAt100(line.text, o).height, 1);
+        o.set({ fontWeight: guessWeight(line.text, o.fontFamily, approx, line.bbox.density) });
       }
-      o.set({ left: x0, top: y0 + bh / 2 - o.height / 2 });
-      o.setCoords();
+      // Remember the original letters' area so edits can re-fit to it.
+      o.set({ fitBox: { x0, y0, x1, y1 }, autoFit: true });
+      fitToBox(o);
     },
   };
+}
+
+/**
+ * Size and space a one-line text so its letters cover o.fitBox (the original
+ * letters' pixel bounds). Height first: the letters get the original's height
+ * and letter spacing absorbs the width difference, so a missing "/" spreads
+ * digits instead of enlarging them. Squeezing is limited to −8% of a
+ * character; past that the font shrinks.
+ */
+function fitToBox(o) {
+  const { x0, y0, x1, y1 } = o.fitBox;
+  const bw = x1 - x0;
+  const bh = y1 - y0;
+  const ink = inkAt100(o.text, o);
+  const n = [...o.text].length;
+  const MIN_SPACING = -80; // thousandths of the font size
+  let fs = (bh * 100) / Math.max(ink.height, 1);
+  let spacing = n > 1 ? (((bw - (ink.width * fs) / 100) / (n - 1)) / fs) * 1000 : 0;
+  if (spacing < MIN_SPACING) {
+    fs = bw / (ink.width / 100 + ((n - 1) * MIN_SPACING) / 1000);
+    spacing = MIN_SPACING;
+  }
+  fs = Math.min(2000, Math.max(6, fs));
+  o.set({ charSpacing: Math.round(Math.min(2000, spacing)), scaleX: 1, scaleY: 1 });
+  // Centre the letters on the original's: keeps the gaps between rows as in the photo.
+  placeInk(o, ink, fs, (x0 + x1) / 2, (y0 + y1) / 2);
+}
+
+/** After the text of a detected line changes, re-fit it to the original area (unless the user sized it). */
+function refitIfAuto(o) {
+  if (!o || !o.autoFit || !o.fitBox || o.vertical || o.text.includes('\n') || !o.text.trim()) return;
+  fitToBox(o);
 }
 
 async function runDetect() {
   if (!state.original) return;
   const existing = canvas.getObjects().filter((o) => o.ocr);
   if (existing.length && !confirm(t('confirmReplace'))) return;
-  const mode = $('#ocrMode').value;
-  const erase = $('#eraseText').checked;
   await withBusy(t('detecting'), async () => {
-    const lines = await detectText(state.original, {
-      mode,
-      minConfidence: Number($('#minConf').value),
+    let lines = await detectText(state.original, {
       onProgress: (m) => setBusy(`${t(`ocr:${m.status}`).replace(/^ocr:/, '')}…`, typeof m.progress === 'number' ? m.progress : null),
     });
     history.paused = true;
     canvas.discardActiveObject();
     canvas.remove(...existing);
 
-    const built = lines.map((l) => textFromLine(l, estimateTextColor(state.original, l.bbox)));
+    // Readings below 50% confidence are mostly logos and tiny print read as
+    // gibberish; leave those areas exactly as in the photo instead.
+    const skipped = lines.filter((l) => l.confidence < 50).length;
+    lines = lines.filter((l) => l.confidence >= 50);
+    // Fit new text to the letters themselves, not to the OCR box around them.
+    const fitted = lines.map((l) => ({ ...l, bbox: inkBounds(state.original, l.bbox) }));
+    const built = fitted.map((l) => textFromLine(l, estimateTextColor(state.original, l.bbox)));
     await ensureFontsLoaded(built.map((b) => b.obj));
     built.forEach((b) => b.fit(b.obj));
+    separateLines(built.map((b) => b.obj));
+    built.forEach((b, i) => { b.obj.ocrBox = fitted[i].bbox; }); // for checking the fit; not saved
 
     state.clean = cloneCanvas(state.original);
     state.eraseUndo = [];
-    if (erase) lines.forEach((l) => eraseBox(state.clean, l.bbox, Math.max(3, (l.bbox.y1 - l.bbox.y0) * 0.12)));
+    lines.forEach((l) => eraseText(state.clean, l.bbox, 2));
     state.bgDirty = true;
-    $('#showOriginal').checked = false;
     setBackground(state.clean);
 
     if (built.length) canvas.add(...built.map((b) => b.obj));
@@ -283,7 +514,8 @@ async function runDetect() {
     const nVertical = lines.filter((l) => l.vertical).length;
     toast(lines.length
       ? `${t(lines.length === 1 ? 'foundOne' : 'foundMany', { n: lines.length })}${nVertical && nVertical < lines.length ? ` ${t('foundVertical', { n: nVertical })}` : ''}`
-      : t('noTextFound'), lines.length ? 'ok' : 'warn');
+      : t('noTextFound'), lines.length ? 'ok' : 'warn', skipped ? 7000 : 3500);
+    if (skipped) setTimeout(() => toast(t('keptAsPhoto', { n: skipped }), 'info', 6000), 3600);
   });
 }
 
@@ -312,7 +544,7 @@ function renderProps() {
   const o = active();
   $('#props').hidden = !o;
   $('#noSelection').hidden = Boolean(o);
-  if (!o) return;
+  if (!o) { renderQuickEdit(); return; }
   const ta = $('#propText');
   if (document.activeElement !== ta) ta.value = o.vertical ? fromVertical(o.text) : o.text;
   $('#propFont').value = FONTS[o.fontFamily] ? o.fontFamily : DEFAULT_FAMILY;
@@ -320,9 +552,11 @@ function renderProps() {
   $('#propSize').value = Math.round(o.fontSize * o.scaleY);
   $('#propColor').value = typeof o.fill === 'string' && /^#[0-9a-f]{6}$/i.test(o.fill) ? o.fill : new fabric.Color(o.fill).toHex().replace(/^#?/, '#');
   $('#propLine').value = o.lineHeight;
+  $('#propSpacing').value = Math.round(o.charSpacing || 0);
   $('#propVertical').checked = Boolean(o.vertical);
   $('#propOpacity').value = o.opacity ?? 1;
   document.querySelectorAll('[name=align]').forEach((r) => { r.checked = r.value === o.textAlign; });
+  renderQuickEdit();
 }
 
 async function updateActive(changes, { remeasure = true } = {}) {
@@ -339,26 +573,97 @@ async function updateActive(changes, { remeasure = true } = {}) {
 $('#propText').addEventListener('input', (e) => {
   const o = active();
   if (!o) return;
-  updateActive({ text: o.vertical ? toVertical(e.target.value) : e.target.value });
+  updateActive({ text: o.vertical ? toVertical(e.target.value) : e.target.value }).then(() => { refitIfAuto(o); canvas.requestRenderAll(); renderQuickEdit(); });
 });
 $('#propFont').addEventListener('change', (e) => updateActive({ fontFamily: e.target.value }));
 $('#propBold').addEventListener('change', (e) => updateActive({ fontWeight: e.target.checked ? 700 : 400 }));
 $('#propSize').addEventListener('change', (e) => {
   const v = Number(e.target.value);
-  if (v > 0) updateActive({ fontSize: v, scaleX: 1, scaleY: 1 });
+  if (v > 0) updateActive({ fontSize: v, scaleX: 1, scaleY: 1, autoFit: false });
 });
 $('#propColor').addEventListener('input', (e) => updateActive({ fill: e.target.value }, { remeasure: false }));
 $('#propLine').addEventListener('change', (e) => updateActive({ lineHeight: Number(e.target.value) || 1 }));
+$('#propSpacing').addEventListener('change', (e) => updateActive({ charSpacing: Number(e.target.value) || 0, autoFit: false }));
 $('#propOpacity').addEventListener('input', (e) => updateActive({ opacity: Number(e.target.value) }, { remeasure: false }));
-$('#propVertical').addEventListener('change', (e) => {
+function setVertical(on) {
   const o = active();
   if (!o) return;
   const plain = o.vertical ? fromVertical(o.text) : o.text.replace(/\n/g, '');
-  updateActive(e.target.checked
+  updateActive(on
     ? { vertical: true, text: toVertical(plain), textAlign: 'center' }
-    : { vertical: false, text: plain, textAlign: 'left' });
-  renderProps();
+    : { vertical: false, text: plain, textAlign: 'left' }).then(renderProps);
+}
+$('#propVertical').addEventListener('change', (e) => setVertical(e.target.checked));
+
+/* ---------------- Pop-up editor next to the selected text ---------------- */
+
+let transforming = false;
+function renderQuickEdit() {
+  const box = $('#quickEdit');
+  const o = active();
+  if (!o || o.isEditing || transforming || comparing || state.tool !== 'select') { box.hidden = true; return; }
+  const ta = $('#qeText');
+  if (document.activeElement !== ta) ta.value = o.vertical ? fromVertical(o.text) : o.text;
+  if (document.activeElement !== $('#qeSize')) $('#qeSize').value = Math.round(o.fontSize * o.scaleY);
+  $('#qeColor').value = $('#propColor').value;
+  $('#qeBold').setAttribute('aria-pressed', String(normalizeWeight(o.fontWeight) === 700));
+  $('#qeVertical').setAttribute('aria-pressed', String(Boolean(o.vertical)));
+  box.hidden = false;
+  positionQuickEdit();
+}
+
+function positionQuickEdit() {
+  const box = $('#quickEdit');
+  const o = active();
+  if (box.hidden || !o) return;
+  const c = canvas.upperCanvasEl.getBoundingClientRect();
+  const z = c.width / canvas.getWidth();
+  const b = o.getBoundingRect();
+  const top = c.top + b.top * z;
+  const bottom = top + b.height * z;
+  const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+  const w = box.offsetWidth;
+  const h = box.offsetHeight;
+  let y = bottom + 10;
+  if (y + h > vh - 8) y = top - h - 10;           // no room below: go above
+  if (y < 8) y = Math.min(vh - h - 8, Math.max(8, bottom + 10)); // no room either: keep on screen
+  const x = Math.min(Math.max(8, c.left + (b.left + b.width / 2) * z - w / 2), window.innerWidth - w - 8);
+  box.style.left = `${x}px`;
+  box.style.top = `${y}px`;
+}
+
+['object:moving', 'object:scaling', 'object:rotating'].forEach((ev) => canvas.on(ev, () => { transforming = true; $('#quickEdit').hidden = true; }));
+canvas.on('mouse:up', () => { if (transforming) { transforming = false; renderQuickEdit(); } });
+canvas.on('text:editing:entered', () => { $('#quickEdit').hidden = true; });
+canvas.on('text:editing:exited', () => renderQuickEdit());
+$('#stage').addEventListener('scroll', positionQuickEdit);
+window.addEventListener('resize', positionQuickEdit);
+window.visualViewport?.addEventListener('resize', positionQuickEdit);
+
+const resizeBy = (factor) => {
+  const o = active();
+  if (!o) return;
+  const now = o.fontSize * o.scaleY;
+  const next = Math.max(4, Math.round(factor > 1 ? Math.max(now + 1, now * factor) : Math.min(now - 1, now * factor)));
+  updateActive({ fontSize: next, scaleX: 1, scaleY: 1, autoFit: false }).then(renderProps);
+};
+$('#qeText').addEventListener('input', (e) => {
+  const o = active();
+  if (o) updateActive({ text: o.vertical ? toVertical(e.target.value) : e.target.value }).then(() => { refitIfAuto(o); canvas.requestRenderAll(); renderProps(); });
 });
+$('#qeSmaller').addEventListener('click', () => resizeBy(1 / 1.1));
+$('#qeBigger').addEventListener('click', () => resizeBy(1.1));
+$('#qeSize').addEventListener('change', (e) => {
+  const v = Number(e.target.value);
+  if (v > 0) updateActive({ fontSize: v, scaleX: 1, scaleY: 1, autoFit: false }).then(renderProps);
+});
+$('#qeColor').addEventListener('input', (e) => { updateActive({ fill: e.target.value }, { remeasure: false }); $('#propColor').value = e.target.value; });
+$('#qeBold').addEventListener('click', () => {
+  const o = active();
+  if (o) updateActive({ fontWeight: normalizeWeight(o.fontWeight) === 700 ? 400 : 700 }).then(renderProps);
+});
+$('#qeVertical').addEventListener('click', () => { const o = active(); if (o) setVertical(!o.vertical); });
+$('#qeDelete').addEventListener('click', () => { const o = active(); if (o) canvas.remove(o); });
 document.querySelectorAll('[name=align]').forEach((r) => r.addEventListener('change', () => updateActive({ textAlign: r.value }, { remeasure: false })));
 
 $('#dupBtn').addEventListener('click', async () => {
@@ -405,6 +710,29 @@ function renderLayers() {
     return li;
   }));
   $('#layerCount').textContent = objs.length;
+}
+
+/* ---------------- Hold to see the original photo ---------------- */
+
+let comparing = false;
+function setComparing(on) {
+  if (on === comparing || !state.original) return;
+  comparing = on;
+  canvas.discardActiveObject();
+  canvas.getObjects().forEach((o) => {
+    if (on) { o._wasVisible = o.visible; o.visible = false; } else { o.visible = o._wasVisible ?? true; }
+  });
+  setBackground(on ? state.original : state.clean);
+  $('#compareBtn').classList.toggle('active', on);
+  renderQuickEdit();
+}
+{
+  const btn = $('#compareBtn');
+  btn.addEventListener('pointerdown', (e) => { e.preventDefault(); btn.setPointerCapture?.(e.pointerId); setComparing(true); });
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((ev) => btn.addEventListener(ev, () => setComparing(false)));
+  btn.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setComparing(true); } });
+  btn.addEventListener('keyup', () => setComparing(false));
+  btn.addEventListener('contextmenu', (e) => e.preventDefault());
 }
 
 /* ---------------- Erase tool ---------------- */
@@ -459,10 +787,9 @@ canvas.on('mouse:up', () => {
   const h = Math.min(state.clean.height - y, Math.ceil(height) + 16);
   state.eraseUndo.push({ x, y, data: state.clean.getContext('2d').getImageData(x, y, w, h) });
   if (state.eraseUndo.length > 30) state.eraseUndo.shift();
-  eraseBox(state.clean, box, 0);
+  eraseText(state.clean, box, 0);
   state.bgDirty = true;
   markDirty();
-  $('#showOriginal').checked = false;
   setBackground(state.clean);
   refreshEnabled();
 });
@@ -506,7 +833,7 @@ async function newFromFile(file) {
   });
   renderLayers();
   renderProps();
-  if ($('#autoDetect').checked) runDetect();
+  runDetect();
 }
 
 function currentStore() {
@@ -561,7 +888,6 @@ async function openRecord(rec, homeKey) {
   state.bgDirty = !homeKey;
   state.origDirty = !homeKey;
   $('#docName').value = state.name;
-  $('#showOriginal').checked = false;
   resetCanvas(rec.width || state.clean.width, rec.height || state.clean.height);
   setBackground(state.clean);
   await restoreObjects(rec.objects || []);
@@ -640,7 +966,6 @@ async function fillOpenList(store) {
 
 async function doExport(kind) {
   if (!hasDoc()) return;
-  if ($('#showOriginal').checked) { $('#showOriginal').checked = false; setBackground(state.clean); }
   const base = safeFilename(state.name);
   const scale = Number($('#exportScale').value) || 1;
   await withBusy(t('exporting', { kind: kind.toUpperCase() }), async () => {
@@ -673,9 +998,6 @@ const FONT_LABELS = { 'Noto Sans TC': 'fontSans', 'Noto Serif TC': 'fontSerif' }
 
 /** Dropdowns whose option text comes from code rather than index.html. */
 function renderOptions() {
-  const mode = $('#ocrMode').value;
-  $('#ocrMode').replaceChildren(...Object.entries(OCR_MODES).map(([k, v]) => new Option(t(v.labelKey), k)));
-  if (mode) $('#ocrMode').value = mode;
   const font = $('#propFont').value;
   $('#propFont').replaceChildren(...Object.keys(FONTS).map((f) => new Option(FONT_LABELS[f] ? t(FONT_LABELS[f]) : f, f)));
   if (font) $('#propFont').value = font;
@@ -827,8 +1149,7 @@ function init() {
   $('#redoBtn').addEventListener('click', redo);
   $('#saveBtn').addEventListener('click', save);
   $('#openBtn').addEventListener('click', showOpenDialog);
-  $('#showOriginal').addEventListener('change', (e) => setBackground(e.target.checked ? state.original : state.clean));
-  $('#zoom').addEventListener('change', (e) => { state.zoom = e.target.value; applyZoom(); });
+  $('#zoom').addEventListener('change', (e) => { if (e.target.selectedOptions[0]?.dataset.custom) return; state.zoom = e.target.value; applyZoom(); });
   $('#docName').addEventListener('input', (e) => { state.name = e.target.value; markDirty(); });
   $('.menu summary').addEventListener('click', (e) => {
     if (e.currentTarget.hasAttribute('disabled')) e.preventDefault();

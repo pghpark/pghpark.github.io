@@ -47,6 +47,8 @@ export function textGeometry(obj) {
     lines,
     matrix: m,
     fontSize: obj.fontSize * obj.scaleY,
+    // Extra space after each letter, in px (Fabric's charSpacing is 1/1000 em).
+    letterSpacing: ((obj.charSpacing || 0) / 1000) * obj.fontSize * obj.scaleY,
     leading: obj._textLines.length ? obj.getHeightOfLine(0) * obj.scaleY : obj.fontSize * obj.scaleY,
     angle: obj.angle || 0,
     color: colorOf(obj),
@@ -113,6 +115,7 @@ export async function exportPDF(canvas, background, name, onProgress = () => {})
   for (const o of texts) {
     const font = fonts.get(`${o.fontFamily}|${normalizeWeight(o.fontWeight)}`);
     const g = textGeometry(o);
+    page.pushOperators(PDFLib.setCharacterSpacing(g.letterSpacing));
     for (const line of g.lines) {
       if (!line.text.trim()) continue;
       page.drawText(line.text, {
@@ -125,6 +128,7 @@ export async function exportPDF(canvas, background, name, onProgress = () => {})
         rotate: degrees(-g.angle),
       });
     }
+    page.pushOperators(PDFLib.setCharacterSpacing(0));
   }
   return new Blob([await doc.save()], { type: 'application/pdf' });
 }
@@ -164,6 +168,7 @@ export async function exportPSD(canvas, background, original) {
         style: {
           font: { name: fontEntry(o.fontFamily, o.fontWeight).ps },
           fontSize: g.fontSize,
+          tracking: Math.round(o.charSpacing || 0),
           autoLeading: false,
           leading: g.leading,
           fillColor: { r: g.color.r, g: g.color.g, b: g.color.b },
@@ -239,6 +244,7 @@ export async function exportPPTX(canvas, background, name) {
       wrap: false,
       fit: 'none',
       lineSpacing: g.leading * 0.75, // exact spacing, same as the canvas
+      charSpacing: g.letterSpacing * 0.75, // px → pt
       rotate: g.angle,
       lang: 'zh-TW',
     });

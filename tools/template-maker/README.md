@@ -33,16 +33,10 @@ detection, use a sharp, well-lit photo taken straight on, with printed (not hand
 ## What it does
 
 1. **Upload a photo** (**New template from photo**, drag-and-drop, or paste). Large photos are scaled to 2400 px on the long side.
-2. **Detect text.** [Tesseract.js](https://github.com/naptha/tesseract.js) reads the text with the
-   `chi_tra` + `eng` models (`chi_tra_vert` for vertical text). The spaces Tesseract puts between
-   Chinese characters are removed.
-3. **Remove the original text.** Each detected line is painted over with colours sampled
-   around it. Use **Erase area** to drag over anything it missed.
-4. **Edit.** Each line becomes a text box placed and sized over the original, in a colour sampled
-   from the photo. Double-click to type on the canvas, or use the side panel (which works well with
-   Chinese input methods). You can change the font, bold, size, colour, alignment, line height,
-   vertical text (直排) and opacity, plus undo/redo.
-5. **Save template** to this browser (IndexedDB), or to the cloud once Supabase is set up (below).
+2. **Find and read every piece of text** with [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) PP-OCRv5 (Apache-2.0), running in the browser through ONNX Runtime Web (see *How text is found* below).
+3. **Remove the original text** from the background. Only the letter strokes are repainted, from the pixels around them, so artwork behind or next to the text isn't smeared. Hold **Hold to see original** to compare with the untouched photo.
+4. **Edit.** Each line becomes a text box whose letters cover the original's: the same letter height, line width (through letter spacing), position, colour and bold/regular weight. Tap a box for the pop-up editor (text, size, colour, bold, vertical, delete), or use the side panel for everything else. After you correct a misread, the line re-fits itself to the original area. Pinch or Ctrl + scroll to zoom.
+5. **Save** to this browser (IndexedDB), or to the cloud once Supabase is set up (below).
 6. **Export:**
 
 | Format | Notes |
@@ -64,40 +58,18 @@ detection, use a sharp, well-lit photo taken straight on, with printed (not hand
 - **Vertical text:** stored as one character per line, so the PSD and PDF look the same as the canvas. (ag-psd warns that writing true vertical-orientation PSD text can corrupt the file.)
 - **Fallback warning:** if Google Fonts can't load, the editor warns instead of quietly exporting in a fallback font.
 
-## Auto detect layout
+## How text is found
 
-**Auto detect** is the default layout. It reads the photo four ways in parallel workers:
-- as horizontal text with Tesseract page modes 3 (auto), 6 (single block) and 11 (sparse text);
-- as vertical text with `chi_tra_vert`, mode 5.
-
-It then:
-1. keeps the best horizontal reading and the best vertical reading, scored as readable characters × confidence², and uses the better of the two as the base;
-2. swaps in confident lines of the other orientation wherever they explain a region better, as long as they don't cut across a much longer line. That way a poster with a vertical title and horizontal details gets both.
-
-It was tuned on synthetic Traditional Chinese poster photos (10 fonts; tilt, perspective, blur, noise, shading and JPEG damage), and the final check used 50 photos that played no part in tuning:
-
-| Character accuracy (F1) | Horizontal | Block | Scattered | Vertical | Mixed | All |
-|---|---|---|---|---|---|---|
-| **Auto detect** | **71.2** | **92.6** | 72.3 | **74.4** | **74.4** | **77.0** |
-| Horizontal text (Tesseract auto) | 62.3 | 86.0 | 52.6 | 0.0 | 58.0 | 51.8 |
-| Best fixed mode for each column* | 70.1 | 90.8 | 72.5 | 70.5 | 72.0 | 64.8 |
-
-\* Each column shows whichever fixed mode did best there; the "All" figure is the best fixed mode overall (Scattered text).
-
-The trade-off is speed: about four OCR passes instead of one. Pick a fixed layout when you already know it.
+- **Finding and reading text:** PaddleOCR PP-OCRv5 (mobile models, from npm `pdfmarkdown-ppocrv5-models`, served by jsDelivr). A detection model finds every text region, in any layout including vertical; a recognition model then reads each region. Vertical regions are rotated first, as PaddleOCR does. One model reads Traditional and Simplified Chinese, English and Japanese, with an 18,384-character dictionary.
+- **Taiwan forms:** occasional Simplified outputs (国, 创) are converted with [OpenCC](https://github.com/BYVoid/OpenCC) (Mainland → Taiwan characters, no vocabulary changes); 台 is kept as written.
+- **Unreadable areas** (below 50% reading confidence, usually logos or tiny print) are left as in the photo rather than replaced with gibberish.
+- **Sizing:** each new line is fitted to the original letters' pixel bounds (not the OCR box). Letter height sets the font size, letter spacing absorbs width differences, and bold or regular is chosen by comparing stroke coverage. Overlapping display lettering is shrunk just enough not to collide.
+- **Fallback:** if PaddleOCR can't load (very old browsers), Tesseract.js is used instead.
+- **Download size:** about 35 MB on first use (ONNX Runtime ~14 MB, models ~21 MB), then cached by the browser.
 
 ## OCR accuracy
 
-Tesseract does well on clear printed text, but expect to fix a few characters by hand. In testing
-it read 烏龍鮮奶茶 as 局龍魚奶余. Tips:
-
-- Leave **Layout** on *Auto detect*, or pick a fixed layout if you know it (faster).
-- Straight-on, well-lit, high-resolution photos help a lot.
-- Raise **Skip results below confidence** if you get junk boxes.
-
-For much higher accuracy, swap `detectText()` in `ocr.js` for a cloud OCR such as Google Cloud
-Vision, Azure Read or a vision LLM. That needs a secret API key, so it must go through a small proxy
-(a Supabase Edge Function or Cloudflare Worker). Never put the key in this public repo.
+Expect to correct a few characters. Thin strokes such as the "/" in a stylised date can be missed, and hand-lettered titles may be misread. Correct the text in the pop-up editor and the line re-fits to the original area.
 
 ## Turn on cloud saving (Supabase, free tier)
 
@@ -124,7 +96,8 @@ A **Sign in for cloud** button then appears. Once you're signed in, **Save templ
 |---|---|
 | `index.html`, `style.css` | Page and layout. No build step. |
 | `app.js` | Editor: canvas, OCR → text boxes, panel, undo, erase tool, open/save, export menu. |
-| `ocr.js` | Tesseract.js wrapper and clean-up of Chinese results. |
+| `paddle.js` | PaddleOCR PP-OCRv5 detection and recognition with ONNX Runtime Web. |
+| `ocr.js` | Calls PaddleOCR, with a Tesseract.js fallback. |
 | `imaging.js` | Photo loading, text removal, text-colour estimate. |
 | `fonts.js` | Font list, font loading, HarfBuzz subsetting. |
 | `export.js` | PNG/JPEG/WebP/SVG/PDF/PPTX/PSD writers. |
@@ -133,7 +106,7 @@ A **Sign in for cloud** button then appears. Once you're signed in, **Save templ
 | `config.js` | Supabase settings (blank = browser-only). |
 | `supabase-schema.sql` | One-time database setup. |
 
-Libraries load from jsDelivr with pinned versions: Fabric.js 7.4.0, Tesseract.js 7.0.0,
+Libraries load from jsDelivr with pinned versions: Fabric.js 7.4.0, ONNX Runtime Web 1.30.0, PP-OCRv5 models (pdfmarkdown-ppocrv5-models 1.0.0), opencc-js 1.4.2, Tesseract.js 7.0.0,
 pdf-lib 1.17.1, @pdf-lib/fontkit 1.1.1, ag-psd 31.0.2, PptxGenJS 4.0.1, harfbuzzjs 1.6.2 and
 supabase-js 2.117.2. Check `export.js → textGeometry()` before upgrading Fabric, because it
 mirrors Fabric 7's text-baseline maths so the PDF and PSD line up with the canvas.
