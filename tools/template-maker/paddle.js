@@ -18,7 +18,7 @@ const MODELS = [
 const ORT_WASM = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/';
 
 // PaddleOCR's DB defaults, except unclip (2.0 keeps the edge characters).
-const DET = { limitSide: 960, maxSide: 2400, fineSide: 1920, tile: 640, tileMargin: 64, smallText: 48, thresh: 0.3, boxThresh: 0.6, unclip: 2.0, mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225] };
+const DET = { limitSide: 960, maxSide: 2400, fineSide: 1920, wholeArea: 1.4e6, tile: 1024, tileMargin: 160, smallText: 48, thresh: 0.3, boxThresh: 0.6, unclip: 2.0, mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225] };
 const REC_HEIGHT = 48;
 
 const ORT_JS = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ort.min.js';
@@ -117,7 +117,7 @@ function toTensor(ctx, w, h, mean, std, x = 0, y = 0) {
  * like PaddleOCR's DBPostProcess it is scored by its mean probability and
  * expanded by area × unclip / perimeter.
  */
-async function detect(session, source, side) {
+async function detect(session, source, side, { tiled = false } = {}) {
   const long = Math.max(source.width, source.height);
   const s = side / long;
   const w = Math.max(32, Math.round((source.width * s) / 32) * 32);
@@ -125,12 +125,12 @@ async function detect(session, source, side) {
   const c = canvasOf(w, h);
   const ctx = c.getContext('2d', { willReadFrequently: true });
   ctx.drawImage(source, 0, 0, w, h);
-  // The model works on tiles: its memory use grows with the area it is given,
-  // and a whole 2400 px photo needs more than a phone browser allows (Safari
-  // closes the tab). It only looks at local neighbourhoods, so tiles with an
-  // overlapping margin, stitched, give the same map.
+  // Tiled: the model's memory use grows with the area it is given, and a whole
+  // 2400 px photo needs more than a phone browser allows (Safari closes the
+  // tab). It looks at local neighbourhoods, so overlapping tiles, stitched,
+  // give nearly the same map; only very large lettering can be cut at a seam.
   const prob = new Float32Array(w * h);
-  const T = DET.tile; const M = DET.tileMargin;
+  const T = tiled ? DET.tile : Infinity; const M = DET.tileMargin;
   const starts = (n) => { const out = []; for (let p = 0; ; p += T - 2 * M) { out.push(Math.max(0, Math.min(p, n - T))); if (p + T >= n) break; } return [...new Set(out)]; };
   for (const ty of h <= T ? [0] : starts(h)) {
     for (const tx of w <= T ? [0] : starts(w)) {
@@ -239,15 +239,18 @@ export async function paddleDetect(source, { onProgress } = {}) {
   const notify = onProgress || (() => {});
   const { det, rec, chars, cn2tw } = await load(notify);
   notify({ status: 'finding text', progress: 0 });
-  // Two passes. At the photo's own size (960–2400 px on the long side) display
-  // lettering is found whole. Small print also needs an enlarged pass: at the
-  // smaller size the first or last character of a small line is often missed
-  // (benchmark: 69.5% → 72.8% of characters read). Enlarging splits big
-  // lettering, though, so the enlarged pass only adds or improves small text.
+  // Two passes. The whole image, at most ~1.4 megapixels so it fits a phone's
+  // memory, finds display lettering whole (tiles could cut a big date).
+  // Small print also needs a larger pass: at the smaller size the first or
+  // last character of a small line is often missed (benchmark: 69.5% → 72.8%
+  // of characters read). That pass is tiled, and only adds or improves small
+  // text, so big lettering never comes from it.
   const long = Math.max(source.width, source.height);
-  const side = Math.min(DET.maxSide, Math.max(DET.limitSide, long));
+  const aspect = Math.min(source.width, source.height) / long;
+  const side = Math.min(DET.maxSide, Math.max(DET.limitSide, long), Math.sqrt(DET.wholeArea / aspect));
   const passes = [await detect(det, source, side)];
-  if (DET.fineSide / side >= 1.25) passes.push(await detect(det, source, DET.fineSide));
+  const fine = Math.min(DET.maxSide, Math.max(DET.fineSide, long));
+  if (fine / side >= 1.25) passes.push(await detect(det, source, fine, { tiled: true }));
   const total = passes[0].length + (passes[1]?.length || 0);
   let done = 0;
   const read = [];
