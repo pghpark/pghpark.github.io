@@ -21,7 +21,18 @@ export const FONTS = {
     400: { ps: 'NotoSerifTC-Regular', url: 'https://fonts.gstatic.com/s/notoseriftc/v37/XLYzIZb5bJNDGYxLBibeHZ0BnHwmuanx8cUaGX9aMOpD.ttf' },
     700: { ps: 'NotoSerifTC-Bold', url: 'https://fonts.gstatic.com/s/notoseriftc/v37/XLYzIZb5bJNDGYxLBibeHZ0BnHwmuanx8cUaGX-9N-pD.ttf' },
   },
+  // 粉圓, rounded; by justfont for use in Taiwan (one weight).
+  Huninn: {
+    400: { ps: 'Huninn-Regular', url: 'https://fonts.gstatic.com/s/huninn/v9/OpNNnoINg9bQ4xkpjg.ttf' },
+  },
+  // 芫荽, hard-pen handwriting; Taiwan Ministry of Education character forms (one weight).
+  Iansui: {
+    400: { ps: 'Iansui-Regular', url: 'https://fonts.gstatic.com/s/iansui/v14/w8gbH2UoTuUp5bOajQ.ttf' },
+  },
 };
+// Not included: LXGW WenKai TC and Cactus Classical Serif use inherited (older)
+// character forms rather than Taiwan's standard ones; Chiron Hei/Sung HK use
+// Hong Kong forms.
 export const DEFAULT_FAMILY = 'Noto Sans TC';
 
 const HB_SUBSET_WASM = 'https://cdn.jsdelivr.net/npm/harfbuzzjs@1.6.2/dist/harfbuzz-subset.wasm';
@@ -32,8 +43,11 @@ export function normalizeWeight(weight) {
 
 export function fontEntry(family, weight) {
   const fam = FONTS[family] || FONTS[DEFAULT_FAMILY];
-  return fam[normalizeWeight(weight)];
+  return fam[normalizeWeight(weight)] || fam[400];
 }
+
+/** Weights a family really has (single-weight families would only get a faked bold). */
+export const weightsOf = (family) => Object.keys(FONTS[family] || {}).map(Number);
 
 /**
  * Make sure the browser has the glyphs for these text objects, then re-measure

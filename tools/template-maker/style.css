@@ -465,3 +465,12 @@ h2[data-tip], .field[data-tip] > span:first-child, .check[data-tip] > span, .men
 .compare-btn.active { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 .stage-area { position: relative; flex: 1; min-width: 0; display: flex; }
 .stage-area > .stage { flex: 1; }
+
+/* Ask about text inside pictures */
+.art-body { padding: 12px 16px; }
+.art-body p { margin: 0 0 8px; }
+.art-list { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0 0 10px; padding: 0; }
+.art-list li { padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg); font-size: 15px; }
+.art-list label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.art-list input { width: 18px; height: 18px; }
+.art-dialog footer { justify-content: flex-end; gap: 8px; }

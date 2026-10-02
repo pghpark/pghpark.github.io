@@ -11,7 +11,7 @@ const MODELS = 'https://cdn.jsdelivr.net/npm/pdfmarkdown-ppocrv5-models@1.0.0';
 const ORT_WASM = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/';
 
 // PaddleOCR defaults (PaddleX PP-OCRv5 inference.yml).
-const DET = { limitSide: 960, maxSide: 1600, thresh: 0.3, boxThresh: 0.6, unclip: 1.5, mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225] };
+const DET = { limitSide: 960, maxSide: 1600, thresh: 0.3, boxThresh: 0.6, unclip: 2.0, mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225] };
 const REC_HEIGHT = 48;
 
 const ORT_JS = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ort.min.js';
@@ -197,7 +197,59 @@ export async function paddleDetect(source, { onProgress } = {}) {
     // A few non-text marks get a box and a near-zero score ("C" at 4%).
     if (r.text && r.confidence >= 20) lines.push({ ...r, text: toTaiwan(r.text, cn2tw), bbox: boxes[i], detScore: boxes[i].score });
   }
-  return lines;
+  return dropRepeats(mergePieces(lines));
+}
+
+/**
+ * The text finder sometimes boxes a character twice: once inside its line and
+ * once on its own ("時" inside "報名時間"). Converting both puts two text
+ * boxes on top of each other, so drop a short reading that sits almost wholly inside
+ * a longer line of the same direction and size.
+ */
+function dropRepeats(lines) {
+  const area = (b) => Math.max(0, b.x1 - b.x0) * Math.max(0, b.y1 - b.y0);
+  const thick = (l) => (l.vertical ? l.bbox.x1 - l.bbox.x0 : l.bbox.y1 - l.bbox.y0);
+  return lines.filter((l) => !lines.some((m) => {
+    if (m === l || m.vertical !== l.vertical || [...m.text].length <= [...l.text].length) return false;
+    const a = l.bbox; const b = m.bbox;
+    const inside = area({ x0: Math.max(a.x0, b.x0), y0: Math.max(a.y0, b.y0), x1: Math.min(a.x1, b.x1), y1: Math.min(a.y1, b.y1) });
+    const ratio = Math.max(thick(l), thick(m)) / Math.max(1, Math.min(thick(l), thick(m)));
+    return inside >= 0.8 * area(a) && ratio < 3;
+  }));
+}
+
+/**
+ * The text finder splits a line at wide gaps ("上午  09:30", letter-spaced
+ * titles, "08 / 03"). Join horizontal pieces that sit on the same baseline at a
+ * similar size with a gap of under ~1.5 character heights.
+ */
+function mergePieces(lines) {
+  const H = (b) => b.y1 - b.y0;
+  const out = [];
+  const rest = [...lines].sort((a, b) => a.bbox.x0 - b.bbox.x0);
+  while (rest.length) {
+    let cur = rest.shift();
+    for (let i = 0; i < rest.length; i++) {
+      const nx = rest[i];
+      if (cur.vertical || nx.vertical) continue;
+      const a = cur.bbox; const b = nx.bbox;
+      const overlapY = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+      const sameRow = overlapY >= 0.6 * Math.min(H(a), H(b));
+      const sameSize = Math.max(H(a), H(b)) / Math.min(H(a), H(b)) < 1.4;
+      const gap = b.x0 - a.x1;
+      if (!sameRow || !sameSize || gap > 1.5 * Math.min(H(a), H(b)) || gap < -0.3 * H(b)) continue;
+      cur = {
+        ...cur,
+        text: `${cur.text}${gap > 0.35 * Math.min(H(a), H(b)) ? ' ' : ''}${nx.text}`,
+        confidence: (cur.confidence * cur.text.length + nx.confidence * nx.text.length) / (cur.text.length + nx.text.length),
+        bbox: { x0: Math.min(a.x0, b.x0), y0: Math.min(a.y0, b.y0), x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1), score: Math.min(a.score, b.score) },
+      };
+      rest.splice(i, 1);
+      i = -1; // look again: the longer line may now reach another piece
+    }
+    out.push(cur);
+  }
+  return out;
 }
 
 /**

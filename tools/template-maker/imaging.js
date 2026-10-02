@@ -206,49 +206,120 @@ export function eraseText(canvas, box, pad = 3) {
 }
 
 /**
+ * How busy the background right around a text box is (0 = flat colour).
+ * Text printed on a plain area scores low; text inside a drawing (a sign, a
+ * banner, a paper someone holds) is surrounded by outlines and colour changes.
+ * Measured on a ring around the box: the share of pixels far from its median colour.
+ */
+export function backgroundBusyness(canvas, box) {
+  const h = box.y1 - box.y0;
+  const pad = Math.max(3, Math.round(h * 0.35));
+  const ring = Math.max(3, Math.round(h * 0.25));
+  const r = clampRect(canvas, box.x0 - pad - ring, box.y0 - pad - ring, box.x1 + pad + ring, box.y1 + pad + ring);
+  const inner = { x0: box.x0 - pad, y0: box.y0 - pad, x1: box.x1 + pad, y1: box.y1 + pad };
+  const w = r.x1 - r.x0; const hh = r.y1 - r.y0;
+  if (w <= 0 || hh <= 0) return 0;
+  const { data } = canvas.getContext('2d', { willReadFrequently: true }).getImageData(r.x0, r.y0, w, hh);
+  const px = [];
+  for (let y = 0; y < hh; y++) for (let x = 0; x < w; x++) {
+    const ax = r.x0 + x; const ay = r.y0 + y;
+    if (ax >= inner.x0 && ax < inner.x1 && ay >= inner.y0 && ay < inner.y1) continue;
+    const i = (y * w + x) * 4; px.push([data[i], data[i + 1], data[i + 2]]);
+  }
+  if (!px.length) return 0;
+  const med = [0, 1, 2].map((k) => median(px.map((p) => p[k])));
+  return px.filter((p) => Math.abs(p[0] - med[0]) + Math.abs(p[1] - med[1]) + Math.abs(p[2] - med[2]) > 90).length / px.length;
+}
+
+/**
  * Tight box around the letter pixels inside a (padded) text box, so new text
  * can be sized to the original letters rather than to the OCR box around them.
  * Pixels closer to the text colour than to the background count as ink; rows
  * and columns with only a few ink pixels (specks, artwork edges) are trimmed.
  * Returns the input box if the text doesn't stand out from its background.
+ * For a vertical line the same is done with rows and columns swapped.
  */
-export function inkBounds(canvas, box) {
-  const bg = sampleRing(canvas, box, 1);
-  const fg = textRGB(canvas, box, bg);
-  if (!fg) return box;
+export function inkBounds(canvas, box, { vertical = false } = {}) {
   const r = clampRect(canvas, box.x0, box.y0, box.x1, box.y1);
   const w = r.x1 - r.x0;
   const h = r.y1 - r.y0;
   if (w < 3 || h < 3) return box;
+  const bg = sampleRing(canvas, box, 1);
   const { data } = canvas.getContext('2d', { willReadFrequently: true }).getImageData(r.x0, r.y0, w, h);
-  const rows = new Uint32Array(h);
-  const cols = new Uint32Array(w);
-  const dist = (i, c) => Math.abs(data[i] - c[0]) + Math.abs(data[i + 1] - c[1]) + Math.abs(data[i + 2] - c[2]);
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = (y * w + x) * 4;
-      if (dist(i, fg) < dist(i, bg) && dist(i, bg) > 40) { rows[y]++; cols[x]++; }
-    }
+  const d = (i, c) => Math.abs(data[i] - c[0]) + Math.abs(data[i + 1] - c[1]) + Math.abs(data[i + 2] - c[2]);
+  // "across" runs over the line's thickness (rows of a horizontal line,
+  // columns of a vertical one); "along" runs along its letters.
+  const A = vertical ? w : h;
+  const B = vertical ? h : w;
+  const at = vertical ? (a, b) => (b * w + a) * 4 : (a, b) => (a * w + b) * 4;
+  // Text colour from the middle band of the box only: the line itself, not a
+  // neighbour (a big date above a time) poking into the padded box.
+  const band = [];
+  for (let a = Math.floor(A * 0.3); a < Math.ceil(A * 0.7); a++) {
+    for (let b = 0; b < B; b++) { const i = at(a, b); band.push([d(i, bg), i]); }
   }
-  const edge = (counts, len) => {
-    const max = Math.max(...counts);
-    if (!max) return null;
-    const min = Math.max(1, max * 0.04);
-    let a = 0; while (a < len && counts[a] < min) a++;
-    let b = len - 1; while (b > a && counts[b] < min) b--;
-    return [a, b + 1];
-  };
-  const ys = edge(rows, h);
-  const xs = edge(cols, w);
-  if (!ys || !xs) return box;
+  band.sort((p, q) => q[0] - p[0]);
+  const top = band.slice(0, Math.max(1, Math.floor(band.length * 0.08)));
+  if (!top.length || top[0][0] < 60) return box;
+  const fg = [0, 1, 2].map((k) => top.reduce((s, [, i]) => s + data[i + k], 0) / top.length);
+  // A pixel is ink if it is nearer this line's colour than the background's.
+  const isInk = (i) => d(i, fg) < d(i, bg) && d(i, bg) > 40;
+  const across = new Uint32Array(A);
+  const along = new Uint32Array(B);
+  for (let a = 0; a < A; a++) {
+    for (let b = 0; b < B; b++) if (isInk(at(a, b))) across[a]++;
+  }
+  // Grow from the middle outwards; stop at the first (nearly) empty row or
+  // column, which separates this line from its neighbours.
+  const maxA = Math.max(...across);
+  if (!maxA) return box;
+  const empty = Math.max(1, maxA * 0.03);
+  const mid = Math.floor(A / 2);
+  let a0 = mid; let a1 = mid;
+  while (a0 > 0 && across[a0 - 1] > empty) a0--;
+  while (a1 < A - 1 && across[a1 + 1] > empty) a1++;
+  if (across[mid] <= empty) { // the middle is a gap (e.g. between two strokes): fall back to everything
+    a0 = across.findIndex((v) => v > empty); a1 = A - 1 - [...across].reverse().findIndex((v) => v > empty);
+  }
   let ink = 0;
-  for (let y = ys[0]; y < ys[1]; y++) ink += rows[y];
-  // Share of the letter box covered by ink: a stroke-weight cue (bold text covers more).
-  const density = ink / Math.max(1, (xs[1] - xs[0]) * (ys[1] - ys[0]));
-  const tight = { x0: r.x0 + xs[0], y0: r.y0 + ys[0], x1: r.x0 + xs[1], y1: r.y0 + ys[1], density };
-  // Don't trust a result that collapsed to a sliver.
+  for (let a = a0; a <= a1; a++) {
+    for (let b = 0; b < B; b++) if (isInk(at(a, b))) { along[b]++; ink++; }
+  }
+  const minB = Math.max(1, Math.max(...along) * 0.04);
+  let b0 = 0; while (b0 < B && along[b0] < minB) b0++;
+  let b1 = B - 1; while (b1 > b0 && along[b1] < minB) b1--;
+  const tight = vertical
+    ? { x0: r.x0 + a0, y0: r.y0 + b0, x1: r.x0 + a1 + 1, y1: r.y0 + b1 + 1 }
+    : { x0: r.x0 + b0, y0: r.y0 + a0, x1: r.x0 + b1 + 1, y1: r.y0 + a1 + 1 };
+  tight.density = ink / Math.max(1, (tight.x1 - tight.x0) * (tight.y1 - tight.y0));
   if ((tight.x1 - tight.x0) < (box.x1 - box.x0) * 0.3 || (tight.y1 - tight.y0) < (box.y1 - box.y0) * 0.3) return box;
   return tight;
+}
+
+/**
+ * Black-and-white mask of the letter strokes inside `box`, scaled to `height`
+ * px tall (width keeps the aspect ratio). Used to compare fonts with the original.
+ */
+export function letterMask(canvas, box, height = 40) {
+  const bw = box.x1 - box.x0; const bh = box.y1 - box.y0;
+  if (bw < 2 || bh < 2) return null;
+  const bg = sampleRing(canvas, box, 1);
+  const fg = textRGB(canvas, box, bg);
+  if (!fg) return null;
+  const w = Math.max(4, Math.min(1200, Math.round((height * bw) / bh)));
+  const c = makeCanvas(w, height);
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.imageSmoothingQuality = 'high';
+  g.drawImage(canvas, box.x0, box.y0, bw, bh, 0, 0, w, height);
+  const { data } = g.getImageData(0, 0, w, height);
+  const mask = new Uint8Array(w * height);
+  for (let k = 0; k < w * height; k++) {
+    const i = k * 4;
+    const dFg = Math.abs(data[i] - fg[0]) + Math.abs(data[i + 1] - fg[1]) + Math.abs(data[i + 2] - fg[2]);
+    const dBg = Math.abs(data[i] - bg[0]) + Math.abs(data[i + 1] - bg[1]) + Math.abs(data[i + 2] - bg[2]);
+    mask[k] = dFg < dBg ? 1 : 0;
+  }
+  return { w, h: height, data: mask };
 }
 
 /** Average colour of the pixels most unlike the background, or null if the text doesn't stand out. */

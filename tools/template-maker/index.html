@@ -7,8 +7,8 @@
   <meta name="description" content="Turn a photo into an editable text template. Traditional Chinese OCR, cloud saving, export to PNG, JPEG, WebP, SVG, PDF and layered PSD.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&family=Noto+Serif+TC:wght@400;700&display=swap">
-  <link rel="stylesheet" href="style.css?v=2026-10-02.4">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&family=Noto+Serif+TC:wght@400;700&family=Huninn&family=Iansui&display=swap">
+  <link rel="stylesheet" href="style.css?v=2026-10-02.6">
   <!-- Versions are pinned; see README.md before upgrading (Fabric 7 changed text positioning). -->
   <script src="https://cdn.jsdelivr.net/npm/fabric@7.4.0/dist/index.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js"></script>
@@ -20,18 +20,18 @@
        (GitHub Pages lets browsers cache each file for 10 minutes). -->
   <script type="importmap">
     {"imports": {
-      "./app.js": "./app.js?v=2026-10-02.4",
-      "./i18n.js": "./i18n.js?v=2026-10-02.4",
-      "./ocr.js": "./ocr.js?v=2026-10-02.4",
-      "./imaging.js": "./imaging.js?v=2026-10-02.4",
-      "./fonts.js": "./fonts.js?v=2026-10-02.4",
-      "./export.js": "./export.js?v=2026-10-02.4",
-      "./storage.js": "./storage.js?v=2026-10-02.4",
-      "./config.js": "./config.js?v=2026-10-02.4",
-      "./paddle.js": "./paddle.js?v=2026-10-02.4"
+      "./app.js": "./app.js?v=2026-10-02.6",
+      "./i18n.js": "./i18n.js?v=2026-10-02.6",
+      "./ocr.js": "./ocr.js?v=2026-10-02.6",
+      "./imaging.js": "./imaging.js?v=2026-10-02.6",
+      "./fonts.js": "./fonts.js?v=2026-10-02.6",
+      "./export.js": "./export.js?v=2026-10-02.6",
+      "./storage.js": "./storage.js?v=2026-10-02.6",
+      "./config.js": "./config.js?v=2026-10-02.6",
+      "./paddle.js": "./paddle.js?v=2026-10-02.6"
     }}
   </script>
-  <script type="module" src="app.js?v=2026-10-02.4"></script>
+  <script type="module" src="app.js?v=2026-10-02.6"></script>
 </head>
 <body>
   <header class="topbar">
@@ -172,6 +172,19 @@
     </footer>
   </dialog>
 
+  <dialog id="artDialog" class="art-dialog">
+    <header><h2 data-i18n="artTitle">Text inside pictures</h2></header>
+    <div class="art-body">
+      <p id="artCount"></p>
+      <ul id="artList" class="art-list" lang="zh-Hant-TW"></ul>
+      <p class="muted small" data-i18n="artHelp">Signs, banners and other text that is part of the artwork. Keep it as part of the picture, or turn it into editable text like the rest?</p>
+    </div>
+    <footer>
+      <button type="button" id="artNo" class="btn" data-i18n="artKeepAll">Keep all as picture</button>
+      <button type="button" id="artYes" class="btn primary" data-i18n="artConvert">Make ticked ones editable</button>
+    </footer>
+  </dialog>
+
   <dialog id="authDialog">
     <header><h2 data-i18n="signIn">Sign in</h2><button class="icon" data-close data-i18n-aria-label="close" aria-label="Close">✕</button></header>
     <form id="authForm">
@@ -191,6 +204,7 @@
       <input id="qeColor" type="color" data-i18n-aria-label="colour" data-i18n-title="colour" aria-label="Colour" title="Colour">
       <button type="button" id="qeBold" class="qe-btn" aria-pressed="false" data-i18n-aria-label="bold" data-i18n-title="bold" aria-label="Bold" title="Bold"><b>B</b></button>
       <button type="button" id="qeVertical" class="qe-btn" aria-pressed="false" data-i18n-aria-label="vertical" data-i18n-title="vertical" aria-label="Vertical text" title="Vertical text">直</button>
+      <button type="button" id="qeKeep" class="qe-btn" data-i18n-aria-label="keepPicture" data-i18n-title="keepPicture" aria-label="Keep as picture" title="Keep as picture"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M21 16l-5-5-8 8"/></svg></button>
       <button type="button" id="qeDelete" class="qe-btn danger" data-i18n-aria-label="delete" data-i18n-title="delete" aria-label="Delete" title="Delete"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></button>
     </div>
   </div>

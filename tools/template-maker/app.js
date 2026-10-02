@@ -1,9 +1,9 @@
 import { detectText } from './ocr.js';
 import { t, applyI18n, setLang, getLang, LANGS } from './i18n.js';
 import {
-  fileToCanvas, urlToCanvas, cloneCanvas, eraseText, estimateTextColor, canvasToBlob, inkBounds,
+  fileToCanvas, urlToCanvas, cloneCanvas, eraseText, estimateTextColor, canvasToBlob, inkBounds, backgroundBusyness, letterMask,
 } from './imaging.js';
-import { FONTS, DEFAULT_FAMILY, ensureFontsLoaded, normalizeWeight } from './fonts.js';
+import { FONTS, DEFAULT_FAMILY, ensureFontsLoaded, normalizeWeight, weightsOf } from './fonts.js';
 import {
   exportRaster, exportSVG, exportPDF, exportPSD, exportPPTX, download, safeFilename, isText,
 } from './export.js';
@@ -12,7 +12,7 @@ import {
 } from './storage.js';
 
 // Custom properties saved with each text object.
-const EXTRA_PROPS = ['vertical', 'ocr', 'fitBox', 'autoFit'];
+const EXTRA_PROPS = ['vertical', 'ocr', 'fitBox', 'autoFit', 'eraseBox'];
 const $ = (sel) => document.querySelector(sel);
 
 const state = {
@@ -344,6 +344,77 @@ function inkDensity(text, family, weight, fs) {
   return ink / (w * h);
 }
 
+/** Render `text` in a font, stretched so its letters fill a w×h box, as a mask. */
+function renderedMask(text, family, weight, w, h) {
+  measureCtx.font = `${weight} 100px "${family}"`;
+  const m = measureCtx.measureText(text);
+  const iw = Math.ceil(m.actualBoundingBoxLeft + m.actualBoundingBoxRight);
+  const ih = Math.ceil(m.actualBoundingBoxAscent + m.actualBoundingBoxDescent);
+  if (iw < 2 || ih < 2) return null;
+  const src = document.createElement('canvas');
+  src.width = iw; src.height = ih;
+  const sg = src.getContext('2d');
+  sg.font = measureCtx.font;
+  sg.fillText(text, m.actualBoundingBoxLeft, m.actualBoundingBoxAscent);
+  const dst = document.createElement('canvas');
+  dst.width = w; dst.height = h;
+  const dg = dst.getContext('2d', { willReadFrequently: true });
+  dg.drawImage(src, 0, 0, w, h);
+  const { data } = dg.getImageData(0, 0, w, h);
+  const out = new Uint8Array(w * h);
+  for (let k = 0; k < w * h; k++) out[k] = data[k * 4 + 3] > 110 ? 1 : 0;
+  return out;
+}
+
+/** Stroke overlap of two masks, allowing 1 px of slack (0 = nothing in common, 1 = identical). */
+function maskSimilarity(a, b, w, h) {
+  const near = (m, k) => {
+    const x = k % w; const y = (k - x) / w;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const xx = x + dx; const yy = y + dy;
+      if (xx >= 0 && yy >= 0 && xx < w && yy < h && m[yy * w + xx]) return true;
+    }
+    return false;
+  };
+  let na = 0; let nb = 0; let hit = 0;
+  for (let k = 0; k < w * h; k++) {
+    if (a[k]) { na++; if (near(b, k)) hit++; }
+    if (b[k]) { nb++; if (near(a, k)) hit++; }
+  }
+  return na + nb ? hit / (na + nb) : 0;
+}
+
+/**
+ * Pick the library font (family + weight) whose letters look most like the
+ * original's: render the recognised text in each candidate, stretched to the
+ * same box, and compare stroke masks. A family other than the default wins
+ * only if it is clearly closer, so lines don't flip fonts on noise.
+ */
+function matchFont(text, photoMask) {
+  if (!photoMask || [...text.replace(/\s/g, '')].length < 1) return null;
+  const { w, h, data } = photoMask;
+  let best = null;
+  let defaultScore = 0;
+  for (const family of Object.keys(FONTS)) {
+    for (const weight of weightsOf(family)) {
+      const m = renderedMask(text, family, weight, w, h);
+      if (!m) continue;
+      const score = maskSimilarity(data, m, w, h);
+      if (family === DEFAULT_FAMILY) defaultScore = Math.max(defaultScore, score);
+      if (!best || score > best.score) best = { family, weight, score };
+    }
+  }
+  if (!best) return null;
+  // Margin and mask size tuned on 444 benchmark lines (family right 81%).
+  if (best.family !== DEFAULT_FAMILY && best.score < defaultScore + 0.01) {
+    // Not clearly better: stay with the default family, at its better weight.
+    const w4 = maskSimilarity(data, renderedMask(text, DEFAULT_FAMILY, 400, w, h) || new Uint8Array(w * h), w, h);
+    const w7 = maskSimilarity(data, renderedMask(text, DEFAULT_FAMILY, 700, w, h) || new Uint8Array(w * h), w, h);
+    return { family: DEFAULT_FAMILY, weight: w7 > w4 ? 700 : 400, score: Math.max(w4, w7) };
+  }
+  return best;
+}
+
 /**
  * Bold or regular? Compare how much of the letter box the original's strokes
  * cover with how much Noto's regular and bold weights cover for the same text,
@@ -433,9 +504,15 @@ function textFromLine(line, color) {
   return {
     obj: newText(line.text, { fontSize: bh, fill: color, ocr: true }),
     fit: (o) => {
-      if (line.bbox.density) {
+      // Family: closest-looking library font. Weight: stroke coverage, which
+      // was right more often (79% vs 73% on the benchmark).
+      const match = matchFont(line.text, line.mask);
+      if (match) o.set({ fontFamily: match.family });
+      if (line.bbox.density && weightsOf(o.fontFamily).includes(700)) {
         const approx = (bh * 100) / Math.max(inkAt100(line.text, o).height, 1);
         o.set({ fontWeight: guessWeight(line.text, o.fontFamily, approx, line.bbox.density) });
+      } else {
+        o.set({ fontWeight: 400 });
       }
       // Remember the original letters' area so edits can re-fit to it.
       o.set({ fitBox: { x0, y0, x1, y1 }, autoFit: true });
@@ -476,10 +553,63 @@ function refitIfAuto(o) {
   fitToBox(o);
 }
 
+/** Turn OCR lines into fitted text boxes and erase their originals from the background. */
+async function convertLines(lines) {
+  // Fit new text to the letters themselves, not to the OCR box around them.
+  const fitted = lines.map((l) => {
+    const bbox = inkBounds(state.original, l.bbox, { vertical: l.vertical });
+    return { ...l, bbox, mask: l.vertical ? null : letterMask(state.original, bbox) };
+  });
+  // Every candidate font needs these characters loaded before comparing shapes.
+  const allText = fitted.map((l) => l.text).join('');
+  await Promise.allSettled(Object.keys(FONTS).flatMap((f) => weightsOf(f).map((w) => document.fonts.load(`${w} 40px "${f}"`, allText))));
+  const built = fitted.map((l) => textFromLine(l, estimateTextColor(state.original, l.bbox)));
+  await ensureFontsLoaded(built.map((b) => b.obj));
+  built.forEach((b) => b.fit(b.obj));
+  built.forEach((b, i) => {
+    b.obj.ocrBox = fitted[i].bbox; // for checking the fit; not saved
+    const e = lines[i].bbox;
+    b.obj.set('eraseBox', { x0: e.x0, y0: e.y0, x1: e.x1, y1: e.y1 });
+  });
+  lines.forEach((l) => eraseText(state.clean, l.bbox, 2));
+  return built.map((b) => b.obj);
+}
+
+// Text inside a drawing (signs, banners, a paper someone holds) is usually
+// surrounded by a busy background. This is only a suggestion: on the benchmark
+// about 8% of ordinary poster lines next to artwork score as high, so the user
+// confirms each one, and any converted line can be put back as picture later.
+const PICTURE_TEXT = 0.7;
+
+/**
+ * Ask which of the lines that look like part of a picture should become
+ * editable. Each has its own tick box; returns the ticked ones.
+ */
+function askAboutPictureText(lines) {
+  const dlg = $('#artDialog');
+  $('#artCount').textContent = t('artFound', { n: lines.length });
+  const boxes = lines.map(() => Object.assign(document.createElement('input'), { type: 'checkbox', checked: true }));
+  $('#artList').replaceChildren(...lines.map((l, i) => {
+    const li = document.createElement('li');
+    const label = document.createElement('label');
+    label.append(boxes[i], document.createTextNode(` ${l.text}`));
+    li.append(label);
+    return li;
+  }));
+  dlg.showModal();
+  return new Promise((resolve) => {
+    const done = (picked) => { dlg.close(); resolve(picked); };
+    $('#artYes').onclick = () => done(lines.filter((_, i) => boxes[i].checked));
+    $('#artNo').onclick = () => done([]);
+    dlg.oncancel = (e) => { e.preventDefault(); done([]); };
+  });
+}
+
 async function runDetect() {
   if (!state.original) return;
   const existing = canvas.getObjects().filter((o) => o.ocr);
   if (existing.length && !confirm(t('confirmReplace'))) return;
+  let pictureLines = [];
   await withBusy(t('detecting'), async () => {
     let lines = await detectText(state.original, {
       onProgress: (m) => setBusy(`${t(`ocr:${m.status}`).replace(/^ocr:/, '')}…`, typeof m.progress === 'number' ? m.progress : null),
@@ -492,21 +622,20 @@ async function runDetect() {
     // gibberish; leave those areas exactly as in the photo instead.
     const skipped = lines.filter((l) => l.confidence < 50).length;
     lines = lines.filter((l) => l.confidence >= 50);
-    // Fit new text to the letters themselves, not to the OCR box around them.
-    const fitted = lines.map((l) => ({ ...l, bbox: inkBounds(state.original, l.bbox) }));
-    const built = fitted.map((l) => textFromLine(l, estimateTextColor(state.original, l.bbox)));
-    await ensureFontsLoaded(built.map((b) => b.obj));
-    built.forEach((b) => b.fit(b.obj));
-    separateLines(built.map((b) => b.obj));
-    built.forEach((b, i) => { b.obj.ocrBox = fitted[i].bbox; }); // for checking the fit; not saved
+    pictureLines = lines.filter((l) => {
+      const ib = inkBounds(state.original, l.bbox, { vertical: l.vertical });
+      const p = (ib.y1 - ib.y0) * 0.15;
+      return backgroundBusyness(state.original, { x0: ib.x0 - p, y0: ib.y0 - p, x1: ib.x1 + p, y1: ib.y1 + p }) >= PICTURE_TEXT;
+    });
+    lines = lines.filter((l) => !pictureLines.includes(l));
 
     state.clean = cloneCanvas(state.original);
     state.eraseUndo = [];
-    lines.forEach((l) => eraseText(state.clean, l.bbox, 2));
+    const objs = await convertLines(lines);
+    separateLines(objs);
     state.bgDirty = true;
     setBackground(state.clean);
-
-    if (built.length) canvas.add(...built.map((b) => b.obj));
+    if (objs.length) canvas.add(...objs);
     history.paused = false;
     pushHistory();
     renderLayers();
@@ -517,6 +646,18 @@ async function runDetect() {
       : t('noTextFound'), lines.length ? 'ok' : 'warn', skipped ? 7000 : 3500);
     if (skipped) setTimeout(() => toast(t('keptAsPhoto', { n: skipped }), 'info', 6000), 3600);
   });
+  const picked = pictureLines.length ? await askAboutPictureText(pictureLines) : [];
+  if (picked.length) {
+    history.paused = true;
+    const objs = await convertLines(picked);
+    setBackground(state.clean);
+    canvas.add(...objs);
+    separateLines(canvas.getObjects().filter((o) => o.ocr));
+    history.paused = false;
+    pushHistory();
+    renderLayers();
+    canvas.requestRenderAll();
+  }
 }
 
 function addText() {
@@ -608,6 +749,7 @@ function renderQuickEdit() {
   $('#qeColor').value = $('#propColor').value;
   $('#qeBold').setAttribute('aria-pressed', String(normalizeWeight(o.fontWeight) === 700));
   $('#qeVertical').setAttribute('aria-pressed', String(Boolean(o.vertical)));
+  $('#qeKeep').hidden = !o.eraseBox;
   box.hidden = false;
   positionQuickEdit();
 }
@@ -664,6 +806,26 @@ $('#qeBold').addEventListener('click', () => {
 });
 $('#qeVertical').addEventListener('click', () => { const o = active(); if (o) setVertical(!o.vertical); });
 $('#qeDelete').addEventListener('click', () => { const o = active(); if (o) canvas.remove(o); });
+$('#qeKeep').addEventListener('click', () => keepAsPicture(active()));
+
+/** Undo the conversion of one line: remove its text box and put the photo's original pixels back. */
+function keepAsPicture(o) {
+  if (!o || !o.eraseBox || !state.original) return;
+  const b = o.eraseBox;
+  const pad = 6;
+  const x = Math.max(0, Math.floor(b.x0 - pad)); const y = Math.max(0, Math.floor(b.y0 - pad));
+  const w = Math.min(state.clean.width - x, Math.ceil(b.x1 - b.x0 + 2 * pad));
+  const h = Math.min(state.clean.height - y, Math.ceil(b.y1 - b.y0 + 2 * pad));
+  // Same undo stack as the Erase area tool, so ↶ Erase puts the cleaned patch back.
+  state.eraseUndo.push({ x, y, data: state.clean.getContext('2d').getImageData(x, y, w, h) });
+  if (state.eraseUndo.length > 30) state.eraseUndo.shift();
+  state.clean.getContext('2d').drawImage(state.original, x, y, w, h, x, y, w, h);
+  state.bgDirty = true;
+  markDirty();
+  setBackground(state.clean);
+  canvas.remove(o);
+  refreshEnabled();
+}
 document.querySelectorAll('[name=align]').forEach((r) => r.addEventListener('change', () => updateActive({ textAlign: r.value }, { remeasure: false })));
 
 $('#dupBtn').addEventListener('click', async () => {
@@ -994,7 +1156,7 @@ function updateSaveTitle() {
   $('#saveBtn').title = t(state.user ? 'saveTitleCloud' : 'saveTitleLocal');
 }
 
-const FONT_LABELS = { 'Noto Sans TC': 'fontSans', 'Noto Serif TC': 'fontSerif' };
+const FONT_LABELS = { 'Noto Sans TC': 'fontSans', 'Noto Serif TC': 'fontSerif', Huninn: 'fontHuninn', Iansui: 'fontIansui' };
 
 /** Dropdowns whose option text comes from code rather than index.html. */
 function renderOptions() {
@@ -1202,4 +1364,4 @@ function init() {
 init();
 
 // Handy for debugging from the console.
-window.templateMaker = { canvas, state };
+window.templateMaker = { canvas, state, debug: { matchFont, renderedMask, maskSimilarity, inkDensity, guessWeight } };
