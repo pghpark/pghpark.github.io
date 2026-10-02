@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Template Maker</title>
+  <meta name="description" content="Turn a photo into an editable text template. Traditional Chinese OCR, cloud saving, export to PNG, JPEG, WebP, SVG, PDF and layered PSD.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&family=Noto+Serif+TC:wght@400;700&display=swap">
+  <link rel="stylesheet" href="style.css">
+  <!-- Versions are pinned; see README.md before upgrading (Fabric 7 changed text positioning). -->
+  <script src="https://cdn.jsdelivr.net/npm/fabric@7.4.0/dist/index.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/ag-psd@31.0.2/dist/bundle.js"></script>
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../../" title="Back to the blog">←</a>
+    <strong class="app-name">Template Maker</strong>
+    <input id="docName" class="doc-name" aria-label="Template name" placeholder="Untitled 未命名" data-needs-doc>
+
+    <div class="actions">
+      <label class="btn primary">
+        <input id="fileInput" type="file" accept="image/*" hidden>
+        New from photo
+      </label>
+      <button id="openBtn" class="btn">Open…</button>
+      <button id="saveBtn" class="btn" data-needs-doc title="Save in this browser (Ctrl+S)">Save</button>
+      <details class="menu">
+        <summary class="btn" data-needs-doc>Export ▾</summary>
+        <div class="menu-body">
+          <button data-export="png">PNG image</button>
+          <button data-export="jpeg">JPEG image</button>
+          <button data-export="webp">WebP image</button>
+          <label class="menu-option">Image scale
+            <select id="exportScale"><option value="1">1×</option><option value="2">2×</option><option value="3">3×</option></select>
+          </label>
+          <hr>
+          <button data-export="pdf">PDF (searchable text)</button>
+          <button data-export="psd">Photoshop PSD (editable text layers)</button>
+          <button data-export="svg">SVG</button>
+          <hr>
+          <button data-export="json">Template file (.json)</button>
+        </div>
+      </details>
+      <span id="account" class="account" hidden>
+        <button id="signInBtn" class="btn">Sign in for cloud</button>
+        <span id="userBox" hidden><span id="userEmail" class="muted"></span> <button id="signOutBtn" class="btn link">Sign out</button></span>
+      </span>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <section id="stage" class="stage">
+      <label id="emptyState" class="empty" for="fileInput">
+        <span class="empty-title">Drop a photo here</span>
+        <span>or paste an image (Ctrl+V), or click <b>New from photo</b>.</span>
+        <span class="muted">The text in the photo becomes editable text boxes. Traditional Chinese (繁體中文) and English are detected.</span>
+      </label>
+      <div id="canvasWrap" class="canvas-wrap" hidden><canvas id="c"></canvas></div>
+      <div id="busy" class="busy" hidden><span id="busyLabel"></span><progress id="busyBar"></progress></div>
+    </section>
+
+    <aside class="panel">
+      <section>
+        <h2>Detect text 文字辨識</h2>
+        <label class="field">Layout
+          <select id="ocrMode"></select>
+        </label>
+        <label class="check"><input id="eraseText" type="checkbox" checked> Remove original text from the photo</label>
+        <label class="check"><input id="autoDetect" type="checkbox" checked> Detect automatically on new photos</label>
+        <label class="field">Skip results below confidence
+          <input id="minConf" type="range" min="0" max="90" step="5" value="30" oninput="this.nextElementSibling.textContent=this.value+'%'"><output>30%</output>
+        </label>
+        <button id="detectBtn" class="btn wide">Detect text again</button>
+      </section>
+
+      <section>
+        <h2>Tools</h2>
+        <div class="row">
+          <button id="addTextBtn" class="btn" data-needs-doc>＋ Text</button>
+          <button id="eraseBtn" class="btn" data-needs-doc title="Drag a box over leftover text to paint it out">Erase area</button>
+          <button id="undoEraseBtn" class="btn" title="Undo last erase">↶ Erase</button>
+        </div>
+        <div class="row">
+          <button id="undoBtn" class="btn" data-needs-doc title="Undo (Ctrl+Z)">↶ Undo</button>
+          <button id="redoBtn" class="btn" data-needs-doc title="Redo (Ctrl+Shift+Z)">↷ Redo</button>
+          <label class="field inline">Zoom
+            <select id="zoom" data-needs-doc><option value="fit">Fit</option><option value="0.5">50%</option><option value="1">100%</option><option value="2">200%</option></select>
+          </label>
+        </div>
+        <label class="check"><input id="showOriginal" type="checkbox"> Show original photo</label>
+      </section>
+
+      <section>
+        <h2>Selected text</h2>
+        <p id="noSelection" class="muted">Click a text box to edit it. Double-click to type on the canvas.</p>
+        <div id="props" hidden>
+          <label class="field">Text
+            <textarea id="propText" rows="3" lang="zh-Hant"></textarea>
+          </label>
+          <div class="row">
+            <label class="field grow">Font
+              <select id="propFont"></select>
+            </label>
+            <label class="check"><input id="propBold" type="checkbox"> Bold</label>
+          </div>
+          <div class="row">
+            <label class="field">Size <input id="propSize" type="number" min="4" max="2000" step="1"></label>
+            <label class="field">Colour <input id="propColor" type="color"></label>
+            <label class="field">Line height <input id="propLine" type="number" min="0.5" max="3" step="0.05"></label>
+          </div>
+          <div class="row segmented" role="radiogroup" aria-label="Alignment">
+            <label><input type="radio" name="align" value="left"><span>Left</span></label>
+            <label><input type="radio" name="align" value="center"><span>Centre</span></label>
+            <label><input type="radio" name="align" value="right"><span>Right</span></label>
+          </div>
+          <label class="check"><input id="propVertical" type="checkbox"> Vertical text 直排</label>
+          <label class="field">Opacity <input id="propOpacity" type="range" min="0" max="1" step="0.05"></label>
+          <div class="row">
+            <button id="dupBtn" class="btn">Duplicate</button>
+            <button id="fwdBtn" class="btn" title="Bring forward">↑</button>
+            <button id="backBtn" class="btn" title="Send backward">↓</button>
+            <button id="delBtn" class="btn danger">Delete</button>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Text layers <span id="layerCount" class="badge">0</span></h2>
+        <ul id="layers" class="layers"></ul>
+      </section>
+    </aside>
+  </main>
+
+  <dialog id="openDialog">
+    <header><h2>Open template</h2><button class="icon" data-close aria-label="Close">✕</button></header>
+    <nav id="openTabs" class="tabs"></nav>
+    <p id="cloudHint" class="muted small">Templates are saved in this browser. Sign in (when cloud saving is set up) to keep them in the cloud and open them on any device.</p>
+    <ul id="templateList" class="template-list"></ul>
+    <footer>
+      <label class="btn">
+        <input id="importInput" type="file" accept=".json,application/json" hidden>
+        Import template file…
+      </label>
+    </footer>
+  </dialog>
+
+  <dialog id="authDialog">
+    <header><h2>Sign in</h2><button class="icon" data-close aria-label="Close">✕</button></header>
+    <form id="authForm">
+      <p class="muted">We'll email you a one-time sign-in link. No password needed.</p>
+      <label class="field">Email <input id="authEmail" type="email" required autocomplete="email"></label>
+      <button class="btn primary wide" type="submit">Send sign-in link</button>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>
