@@ -148,7 +148,10 @@ export async function detectText(source, { mode = 'detect', minConfidence = 30, 
       bbox: { x0: l.bbox.x0 / scale, y0: l.bbox.y0 / scale, x1: l.bbox.x1 / scale, y1: l.bbox.y1 / scale },
     }))
     .filter((l) => l.text && l.confidence >= minConfidence && /[\p{L}\p{N}]/u.test(l.text)
-      && l.bbox.x1 - l.bbox.x0 > 3 && l.bbox.y1 - l.bbox.y0 > 3);
+      && l.bbox.x1 - l.bbox.x0 > 3 && l.bbox.y1 - l.bbox.y0 > 3
+      // Noise and textures read as 1–2 stray letters ("EX", "3"). In testing this
+      // removed only junk: 37 of 671 boxes, with no loss of real text.
+      && !(countChars(l.text) <= 2 && l.confidence < 60));
 
   // Large stylised text sometimes yields a second, garbage reading inside the
   // same area ("今日特價" + "£ + JE"). Keep the most confident line per area.

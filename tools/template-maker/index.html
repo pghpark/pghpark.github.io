@@ -15,6 +15,7 @@
   <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/ag-psd@31.0.2/dist/bundle.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@4.0.1/dist/pptxgen.bundle.js"></script>
   <script type="module" src="app.js"></script>
 </head>
 <body>
@@ -44,6 +45,7 @@
           </label>
           <hr>
           <div class="menu-row"><button data-export="pdf" data-i18n="exportPdf">PDF (searchable text)</button><button type="button" class="info" data-info="pdf" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></div>
+          <div class="menu-row"><button data-export="pptx" data-i18n="exportPptx">PowerPoint / Canva (.pptx, editable text)</button><button type="button" class="info" data-info="pptx" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></div>
           <div class="menu-row"><button data-export="psd" data-i18n="exportPsd">Photoshop PSD (editable text layers)</button><button type="button" class="info" data-info="psd" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></div>
           <div class="menu-row"><button data-export="svg" data-i18n="exportSvg">SVG</button><button type="button" class="info" data-info="svg" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></div>
           <hr>
@@ -68,7 +70,7 @@
         <span class="empty-note" data-i18n-html="dropFormats"><b>Formats:</b> JPG, PNG, WebP, GIF, BMP or AVIF. iPhone HEIC photos open in Safari only; in other browsers, save them as JPG first.</span>
         <span class="empty-note" data-i18n-html="dropTips"><b>Best results:</b> a sharp, well-lit photo taken straight on, with printed (not handwritten) text.</span>
       </label>
-      <div id="canvasWrap" class="canvas-wrap" hidden><canvas id="c"></canvas></div>
+      <div id="canvasWrap" class="canvas-wrap" hidden><canvas id="c" lang="zh-Hant-TW"></canvas></div>
       <div id="busy" class="busy" hidden><span id="busyLabel"></span><progress id="busyBar"></progress></div>
     </section>
 
@@ -108,7 +110,7 @@
         <p id="noSelection" class="muted" data-i18n="noSelection">Click a text box to edit it. Double-click to type on the canvas.</p>
         <div id="props" hidden>
           <label class="field"><span class="label-row"><span data-i18n="text">Text</span><button type="button" class="info" data-info="text" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></span>
-            <textarea id="propText" rows="3" lang="zh-Hant"></textarea>
+            <textarea id="propText" rows="3" lang="zh-Hant-TW"></textarea>
           </label>
           <div class="row">
             <label class="field grow"><span class="label-row"><span data-i18n="font">Font</span><button type="button" class="info" data-info="font" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></span>

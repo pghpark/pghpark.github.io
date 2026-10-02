@@ -48,6 +48,7 @@ detection, use a sharp, well-lit photo taken straight on, with printed (not hand
 | Format | Notes |
 |---|---|
 | PNG / JPEG / WebP | 1×, 2× or 3× scale. |
+| PowerPoint / Canva (.pptx) | **Best for Canva.** One slide the size of the photo: the cleaned background as a picture, plus a real, editable text box for every text box (same font, size, colour, alignment, rotation and line spacing). It also opens in PowerPoint, Google Slides and Keynote. In Canva, drag the file onto the home page. Canva swaps in a similar font if it doesn't have Noto Sans/Serif TC. |
 | PDF | Real, searchable text. The fonts are subset with HarfBuzz to just the characters used, so a page is usually under 100 KB. 1 px = 1 pt. |
 | PSD | Layers: hidden original photo, cleaned background, and one **live text layer** per text box (Noto Sans TC / Noto Serif TC, correct size, colour, position and rotation). Photoshop asks to *update text layers* when the file opens. Click **Update**. Install the fonts from [Google Fonts](https://fonts.google.com/noto/specimen/Noto+Sans+TC) first. |
 | SVG | Text stays as text and the fonts load from Google Fonts. |
@@ -55,6 +56,7 @@ detection, use a sharp, well-lit photo taken straight on, with printed (not hand
 
 ## Traditional Chinese details
 
+- **Taiwan character shapes:** Noto Sans TC and Noto Serif TC follow Taiwan's Ministry of Education standard character shapes (國字標準字體). Hong Kong shapes are the separate “HK” families, which aren't used. The canvas, text editor, PDF (`/Lang zh-TW`) and PowerPoint (`zh-TW`) are all tagged as Taiwan Traditional Chinese, so browsers and Office apps pick Taiwan forms, including for any fallback font.
 - **Fonts:** Noto Sans TC and Noto Serif TC at weights 400 and 700, the same files on screen, in the PDF and named in the PSD (`NotoSansTC-Regular`, `NotoSansTC-Bold`, `NotoSerifTC-Regular`, `NotoSerifTC-Bold`).
 - **PDF font embedding:** the static TrueType files are fetched from `fonts.gstatic.com`, cut down with HarfBuzz (`harfbuzz-subset.wasm`) and embedded with pdf-lib. Two pdf-lib pitfalls are avoided on purpose:
   - pdf-lib's own `subset: true` drops CJK glyphs.
@@ -125,14 +127,14 @@ A **Sign in for cloud** button then appears. Once you're signed in, **Save templ
 | `ocr.js` | Tesseract.js wrapper and clean-up of Chinese results. |
 | `imaging.js` | Photo loading, text removal, text-colour estimate. |
 | `fonts.js` | Font list, font loading, HarfBuzz subsetting. |
-| `export.js` | PNG/JPEG/WebP/SVG/PDF/PSD writers. |
+| `export.js` | PNG/JPEG/WebP/SVG/PDF/PPTX/PSD writers. |
 | `storage.js` | IndexedDB and Supabase stores, `.json` template files. |
 | `i18n.js` | Interface text in English (UK) and 繁體中文, and the language switch. |
 | `config.js` | Supabase settings (blank = browser-only). |
 | `supabase-schema.sql` | One-time database setup. |
 
 Libraries load from jsDelivr with pinned versions: Fabric.js 7.4.0, Tesseract.js 7.0.0,
-pdf-lib 1.17.1, @pdf-lib/fontkit 1.1.1, ag-psd 31.0.2, harfbuzzjs 1.6.2 and
+pdf-lib 1.17.1, @pdf-lib/fontkit 1.1.1, ag-psd 31.0.2, PptxGenJS 4.0.1, harfbuzzjs 1.6.2 and
 supabase-js 2.117.2. Check `export.js → textGeometry()` before upgrading Fabric, because it
 mirrors Fabric 7's text-baseline maths so the PDF and PSD line up with the canvas.
 

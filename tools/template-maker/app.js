@@ -5,7 +5,7 @@ import {
 } from './imaging.js';
 import { FONTS, DEFAULT_FAMILY, ensureFontsLoaded, normalizeWeight } from './fonts.js';
 import {
-  exportRaster, exportSVG, exportPDF, exportPSD, download, safeFilename, isText,
+  exportRaster, exportSVG, exportPDF, exportPSD, exportPPTX, download, safeFilename, isText,
 } from './export.js';
 import {
   LocalStore, CloudStore, cloudConfigured, getSupabase, recordToFile, fileToRecord,
@@ -646,6 +646,9 @@ async function doExport(kind) {
   await withBusy(t('exporting', { kind: kind.toUpperCase() }), async () => {
     if (['png', 'jpeg', 'webp'].includes(kind)) {
       download(await exportRaster(canvas, kind, 0.92, scale), `${base}.${kind === 'jpeg' ? 'jpg' : kind}`);
+    } else if (kind === 'pptx') {
+      download(await exportPPTX(canvas, state.clean, state.name), `${base}.pptx`);
+      toast(t('pptxSaved'), 'ok', 8000);
     } else if (kind === 'svg') {
       download(await exportSVG(canvas), `${base}.svg`);
     } else if (kind === 'pdf') {

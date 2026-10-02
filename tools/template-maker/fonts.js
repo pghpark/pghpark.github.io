@@ -1,4 +1,6 @@
 // Traditional Chinese fonts used by the editor and every exporter.
+// The TC families follow Taiwan's standard character shapes (國字標準字體);
+// Hong Kong forms would be the separate "Noto Sans HK" family.
 //
 // - On screen, the browser loads them from Google Fonts (see index.html).
 // - PDF export needs the actual font file. These are Google's static
