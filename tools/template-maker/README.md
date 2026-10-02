@@ -50,11 +50,13 @@ detection, use a sharp, well-lit photo taken straight on, with printed (not hand
 
 ## Traditional Chinese details
 
-- **Taiwan character shapes:** Noto Sans TC and Noto Serif TC follow Taiwan's Ministry of Education standard character shapes (國字標準字體). Hong Kong shapes are the separate “HK” families, which aren't used. The canvas, text editor, PDF (`/Lang zh-TW`) and PowerPoint (`zh-TW`) are all tagged as Taiwan Traditional Chinese, so browsers and Office apps pick Taiwan forms, including for any fallback font.
-- **Fonts:** Noto Sans TC and Noto Serif TC at weights 400 and 700, the same files on screen, in the PDF and named in the PSD (`NotoSansTC-Regular`, `NotoSansTC-Bold`, `NotoSerifTC-Regular`, `NotoSerifTC-Bold`).
+- **Taiwan character shapes:** Noto Sans TC, Noto Serif TC, Huninn (粉圓) and Iansui (芫荽) follow Taiwan's Ministry of Education standard character shapes (國字標準字體). Only these are picked automatically. The canvas, text editor, PDF (`/Lang zh-TW`) and PowerPoint (`zh-TW`) are all tagged as Taiwan Traditional Chinese, so browsers and Office apps pick Taiwan forms, including for any fallback font.
+- **Fonts:** Noto Sans TC and Noto Serif TC come in Light (300), Regular (400), Bold (700) and Black (900); Huninn and Iansui have one weight. Matching picks regular or bold from stroke coverage, and large lettering (40 px and up) can step on to Black or Light. The same files are used on screen and in the PDF, and named in the PSD (e.g. `NotoSansTC-Black`) and PowerPoint (e.g. `Noto Sans TC Black`).
+- **Other character forms** (font menu, labelled, never picked automatically): LXGW WenKai TC, Cactus Classical Serif and Chocolate Classical Sans (inherited forms); Chiron Hei HK, Chiron Sung HK and Chiron GoRound TC (Hong Kong forms); LXGW Marker Gothic (derived from a Japanese font). They draw some characters differently from Taiwan's standard, so use them only when the original clearly does. Every font's stylesheet loads only when it is first used, and only the slices holding the characters shown are downloaded.
 - **PDF font embedding:** the static TrueType files are fetched from `fonts.gstatic.com`, cut down with HarfBuzz (`harfbuzz-subset.wasm`) and embedded with pdf-lib. Two pdf-lib pitfalls are avoided on purpose:
   - pdf-lib's own `subset: true` drops CJK glyphs.
   - Noto CJK's `locl` feature swaps digits for alternate glyphs that pdf-lib spaces wrongly, so it is turned off.
+  - Some fonts (the Chiron family) subset into a last glyph pdf-lib can't read; those are re-subset keeping the original glyph numbers.
 - **Vertical text:** stored as one character per line, so the PSD and PDF look the same as the canvas. (ag-psd warns that writing true vertical-orientation PSD text can corrupt the file.)
 - **Fallback warning:** if Google Fonts can't load, the editor warns instead of quietly exporting in a fallback font.
 

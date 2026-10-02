@@ -1,5 +1,5 @@
 // Exporters: PNG / JPEG / WebP / SVG / PDF / PSD.
-import { fontEntry, fetchFontBytes, subsetFont, ensureFontsLoaded, normalizeWeight, FONTS } from './fonts.js';
+import { fontEntry, fetchFontBytes, subsetFont, ensureFontsLoaded, normalizeWeight, fontCssUrl } from './fonts.js';
 import { canvasToBlob } from './imaging.js';
 import { t } from './i18n.js';
 
@@ -71,14 +71,25 @@ export async function exportRaster(canvas, format, quality = 0.92, multiplier = 
 
 export async function exportSVG(canvas) {
   await prepare(canvas);
-  const families = Object.keys(FONTS).map((f) => `family=${f.replace(/ /g, '+')}:wght@400;700`).join('&amp;');
-  const fontCss = `<style>@import url('https://fonts.googleapis.com/css2?${families}&amp;display=block');</style>`;
+  const used = [...new Set(canvas.getObjects().filter((o) => o.text).map((o) => o.fontFamily))];
+  const fontCss = `<style>@import url('${fontCssUrl(used).replace('display=swap', 'display=block').replace(/&/g, '&amp;')}');</style>`;
   let svg = canvas.toSVG();
   svg = svg.includes('<defs>') ? svg.replace('<defs>', `<defs>\n${fontCss}`) : svg.replace(/(<svg[^>]*>)/, `$1\n${fontCss}`);
   return new Blob([svg], { type: 'image/svg+xml' });
 }
 
 /** Searchable PDF: photo background + real text in embedded, subsetted fonts. 1 px = 1 pt. */
+/** Can pdf-lib's fontkit read every glyph of this font? (See subsetFont.) */
+function glyphsReadable(bytes) {
+  try {
+    const font = fontkit.create(bytes);
+    for (let g = 0; g < font.numGlyphs; g++) font.getGlyph(g).cbox; // eslint-disable-line no-unused-expressions
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function exportPDF(canvas, background, name, onProgress = () => {}) {
   const texts = await prepare(canvas);
   const { PDFDocument, rgb, degrees } = PDFLib;
@@ -98,22 +109,23 @@ export async function exportPDF(canvas, background, name, onProgress = () => {})
   // One embedded font per family+weight, cut down to the characters used.
   const groups = new Map();
   for (const o of texts) {
-    const key = `${o.fontFamily}|${normalizeWeight(o.fontWeight)}`;
+    const key = `${o.fontFamily}|${normalizeWeight(o.fontWeight, o.fontFamily)}`;
     if (!groups.has(key)) groups.set(key, { family: o.fontFamily, weight: o.fontWeight, text: '' });
     groups.get(key).text += o.text;
   }
   const fonts = new Map();
   for (const [key, g] of groups) {
-    onProgress(t('downloadingFont', { font: `${g.family} ${normalizeWeight(g.weight)}` }));
+    onProgress(t('downloadingFont', { font: `${g.family} ${normalizeWeight(g.weight, g.family)}` }));
     const bytes = await fetchFontBytes(g.family, g.weight);
-    const sub = await subsetFont(bytes, g.text);
+    let sub = await subsetFont(bytes, g.text);
+    if (!glyphsReadable(sub)) sub = await subsetFont(bytes, g.text, { retainGids: true });
     // locl:false — Noto CJK's locl swaps digits to alternate glyphs in Latin runs,
     // which pdf-lib then spaces incorrectly.
     fonts.set(key, await doc.embedFont(sub, { features: { locl: false } }));
   }
 
   for (const o of texts) {
-    const font = fonts.get(`${o.fontFamily}|${normalizeWeight(o.fontWeight)}`);
+    const font = fonts.get(`${o.fontFamily}|${normalizeWeight(o.fontWeight, o.fontFamily)}`);
     const g = textGeometry(o);
     page.pushOperators(PDFLib.setCharacterSpacing(g.letterSpacing));
     for (const line of g.lines) {
@@ -233,9 +245,10 @@ export async function exportPPTX(canvas, background, name) {
       y: (c.y - h / 2) / PX,
       w: (w + extra) / PX,
       h: h / PX,
-      fontFace: o.fontFamily,
+      // Light and Black are separate font names in Office; Bold is the bold flag.
+      fontFace: fontEntry(o.fontFamily, o.fontWeight).face || o.fontFamily,
       fontSize: g.fontSize * 0.75, // px → pt
-      bold: normalizeWeight(o.fontWeight) === 700,
+      bold: normalizeWeight(o.fontWeight, o.fontFamily) === 700,
       color: hex,
       transparency: Math.round((1 - g.color.a * (o.opacity ?? 1)) * 100),
       align,

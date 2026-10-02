@@ -1,6 +1,4 @@
 // Traditional Chinese fonts used by the editor and every exporter.
-// The TC families follow Taiwan's standard character shapes (國字標準字體);
-// Hong Kong forms would be the separate "Noto Sans HK" family.
 //
 // - On screen, the browser loads them from Google Fonts (see index.html).
 // - PDF export needs the actual font file. These are Google's static
@@ -12,42 +10,124 @@
 //   installed locally (free from fonts.google.com).
 import { t } from './i18n.js';
 
+// `forms` is the character standard each family follows:
+//   tw        Taiwan Ministry of Education standard forms (國字標準字體)
+//   inherited older printing forms (舊字形 / 傳承字形)
+//   hk        Hong Kong forms (常用字字形表)
+//   jp        shapes derived from a Japanese font
+// Only `tw` families are chosen automatically when matching a photo; the others
+// are in the font menu, labelled, for when the original clearly uses them.
+// `face` is the font's own family name where it differs (PowerPoint uses it).
+const GS = 'https://fonts.gstatic.com/s/';
 export const FONTS = {
   'Noto Sans TC': {
-    400: { ps: 'NotoSansTC-Regular', url: 'https://fonts.gstatic.com/s/notosanstc/v40/-nFuOG829Oofr2wohFbTp9ifNAn722rq0MXz76Cy_Co.ttf' },
-    700: { ps: 'NotoSansTC-Bold', url: 'https://fonts.gstatic.com/s/notosanstc/v40/-nFuOG829Oofr2wohFbTp9ifNAn722rq0MXz70e1_Co.ttf' },
+    forms: 'tw',
+    300: { ps: 'NotoSansTC-Light', face: 'Noto Sans TC Light', url: `${GS}notosanstc/v40/-nFuOG829Oofr2wohFbTp9ifNAn722rq0MXz7_6y_Co.ttf` },
+    400: { ps: 'NotoSansTC-Regular', url: `${GS}notosanstc/v40/-nFuOG829Oofr2wohFbTp9ifNAn722rq0MXz76Cy_Co.ttf` },
+    700: { ps: 'NotoSansTC-Bold', url: `${GS}notosanstc/v40/-nFuOG829Oofr2wohFbTp9ifNAn722rq0MXz70e1_Co.ttf` },
+    900: { ps: 'NotoSansTC-Black', face: 'Noto Sans TC Black', url: `${GS}notosanstc/v40/-nFuOG829Oofr2wohFbTp9ifNAn722rq0MXz7wm1_Co.ttf` },
   },
   'Noto Serif TC': {
-    400: { ps: 'NotoSerifTC-Regular', url: 'https://fonts.gstatic.com/s/notoseriftc/v37/XLYzIZb5bJNDGYxLBibeHZ0BnHwmuanx8cUaGX9aMOpD.ttf' },
-    700: { ps: 'NotoSerifTC-Bold', url: 'https://fonts.gstatic.com/s/notoseriftc/v37/XLYzIZb5bJNDGYxLBibeHZ0BnHwmuanx8cUaGX-9N-pD.ttf' },
+    forms: 'tw',
+    300: { ps: 'NotoSerifTC-Light', face: 'Noto Serif TC Light', url: `${GS}notoseriftc/v37/XLYzIZb5bJNDGYxLBibeHZ0BnHwmuanx8cUaGX8EMOpD.ttf` },
+    400: { ps: 'NotoSerifTC-Regular', url: `${GS}notoseriftc/v37/XLYzIZb5bJNDGYxLBibeHZ0BnHwmuanx8cUaGX9aMOpD.ttf` },
+    700: { ps: 'NotoSerifTC-Bold', url: `${GS}notoseriftc/v37/XLYzIZb5bJNDGYxLBibeHZ0BnHwmuanx8cUaGX-9N-pD.ttf` },
+    900: { ps: 'NotoSerifTC-Black', face: 'Noto Serif TC Black', url: `${GS}notoseriftc/v37/XLYzIZb5bJNDGYxLBibeHZ0BnHwmuanx8cUaGX_zN-pD.ttf` },
   },
   // 粉圓, rounded; by justfont for use in Taiwan (one weight).
   Huninn: {
-    400: { ps: 'Huninn-Regular', url: 'https://fonts.gstatic.com/s/huninn/v9/OpNNnoINg9bQ4xkpjg.ttf' },
+    forms: 'tw',
+    400: { ps: 'Huninn-Regular', url: `${GS}huninn/v9/OpNNnoINg9bQ4xkpjg.ttf` },
   },
   // 芫荽, hard-pen handwriting; Taiwan Ministry of Education character forms (one weight).
   Iansui: {
-    400: { ps: 'Iansui-Regular', url: 'https://fonts.gstatic.com/s/iansui/v14/w8gbH2UoTuUp5bOajQ.ttf' },
+    forms: 'tw',
+    400: { ps: 'Iansui-Regular', url: `${GS}iansui/v14/w8gbH2UoTuUp5bOajQ.ttf` },
+  },
+  // 霞鶩文楷, brush-like Kai.
+  'LXGW WenKai TC': {
+    forms: 'inherited',
+    400: { ps: 'LXGWWenKaiTC-Regular', url: `${GS}lxgwwenkaitc/v11/w8gDH20td8wNsI3f40DmtXZb48uK.ttf` },
+    700: { ps: 'LXGWWenKaiTC-Bold', url: `${GS}lxgwwenkaitc/v11/w8gAH20td8wNsI3f40DmtXZb4_M2Avkp.ttf` },
+  },
+  // 仙人掌明體, Ming (serif).
+  'Cactus Classical Serif': {
+    forms: 'inherited',
+    400: { ps: 'CactusClassicalSerif-Regular', url: `${GS}cactusclassicalserif/v16/sZlVdQ6K-zJOCzUaS90zMNN-Ep-OoC8dZr0JFuA.ttf` },
+  },
+  // 朱古力黑體, sans.
+  'Chocolate Classical Sans': {
+    forms: 'inherited',
+    400: { ps: 'ChocolateClassicalSans-Regular', url: `${GS}chocolateclassicalsans/v17/nuFqD-PLTZX4XIgT-P2ToCDudWHHflqUpTpfjWdDPA.ttf` },
+  },
+  // 昭源黑體 / 宋體 / 圓體.
+  'Chiron Hei HK': {
+    forms: 'hk',
+    400: { ps: 'ChironHeiHK-Regular', url: `${GS}chironheihk/v7/wXK-E3MSr44vpVKPvzqVJaxhp3w7QQhPNY163lJtr18M.ttf` },
+    700: { ps: 'ChironHeiHK-Bold', url: `${GS}chironheihk/v7/wXK-E3MSr44vpVKPvzqVJaxhp3w7QQhPNY163lKKqF8M.ttf` },
+  },
+  'Chiron Sung HK': {
+    forms: 'hk',
+    400: { ps: 'ChironSungHK-Regular', url: `${GS}chironsunghk/v3/nuFtD_XLTZPpXIpS3-3dhGzHTSilFc8oGNI59hRj9OSt_g.ttf` },
+    700: { ps: 'ChironSungHK-Bold', url: `${GS}chironsunghk/v3/nuFtD_XLTZPpXIpS3-3dhGzHTSilFc8oGNI59hRjE-Ot_g.ttf` },
+  },
+  'Chiron GoRound TC': {
+    forms: 'hk',
+    400: { ps: 'ChironGoRoundTC-Regular', url: `${GS}chirongoroundtc/v5/tssEAopDbiwZ4xauFDX3yQ3Ywoaj6kNR0yP4oqNo8RKqbBqJHA.ttf` },
+    700: { ps: 'ChironGoRoundTC-Bold', url: `${GS}chirongoroundtc/v5/tssEAopDbiwZ4xauFDX3yQ3Ywoaj6kNR0yP4oqNo8RKqix2JHA.ttf` },
+  },
+  // 霞鶩漫黑, marker-style sans derived from the Japanese Tanugo.
+  'LXGW Marker Gothic': {
+    forms: 'jp',
+    400: { ps: 'LXGWMarkerGothic-Regular', url: `${GS}lxgwmarkergothic/v4/Gg8oN4AaXyDVTi_NlS1-xCtMQxY3lToBjg.ttf` },
   },
 };
-// Not included: LXGW WenKai TC and Cactus Classical Serif use inherited (older)
-// character forms rather than Taiwan's standard ones; Chiron Hei/Sung HK use
-// Hong Kong forms.
 export const DEFAULT_FAMILY = 'Noto Sans TC';
+/** Families the photo matcher may pick on its own (Taiwan standard forms). */
+export const MATCH_FAMILIES = Object.keys(FONTS).filter((f) => FONTS[f].forms === 'tw');
 
 const HB_SUBSET_WASM = 'https://cdn.jsdelivr.net/npm/harfbuzzjs@1.6.2/dist/harfbuzz-subset.wasm';
 
-export function normalizeWeight(weight) {
-  return weight === 'bold' || Number(weight) >= 600 ? 700 : 400;
+/** Weights a family really has (single-weight families would only get a faked bold). */
+export const weightsOf = (family) => Object.keys(FONTS[family] || FONTS[DEFAULT_FAMILY]).filter((k) => /^\d+$/.test(k)).map(Number);
+
+/** The family's own weight closest to `weight` ("bold" counts as 700). */
+export function normalizeWeight(weight, family = DEFAULT_FAMILY) {
+  const w = weight === 'bold' ? 700 : weight === 'normal' ? 400 : Number(weight) || 400;
+  return weightsOf(family).reduce((best, k) => (Math.abs(k - w) < Math.abs(best - w) ? k : best));
 }
+
+export const isBold = (weight) => weight === 'bold' || Number(weight) >= 600;
 
 export function fontEntry(family, weight) {
-  const fam = FONTS[family] || FONTS[DEFAULT_FAMILY];
-  return fam[normalizeWeight(weight)] || fam[400];
+  const fam = FONTS[family] ? family : DEFAULT_FAMILY;
+  return FONTS[fam][normalizeWeight(weight, fam)];
 }
 
-/** Weights a family really has (single-weight families would only get a faked bold). */
-export const weightsOf = (family) => Object.keys(FONTS[family] || {}).map(Number);
+/** Google Fonts stylesheet URL for these families, all their weights. */
+export function fontCssUrl(families = Object.keys(FONTS)) {
+  const q = families.filter((f) => FONTS[f]).map((f) => `family=${f.replace(/ /g, '+')}:wght@${weightsOf(f).join(';')}`).join('&');
+  return `https://fonts.googleapis.com/css2?${q}&display=swap`;
+}
+
+const cssLoaded = new Map();
+/**
+ * Add a family's @font-face rules the first time it is needed. Only the
+ * stylesheet is fetched here; the browser then downloads just the slices of
+ * the font that hold the characters actually shown.
+ */
+export function loadFontCss(family) {
+  if (!FONTS[family]) return Promise.resolve();
+  if (!cssLoaded.has(family)) {
+    cssLoaded.set(family, new Promise((resolve) => {
+      const link = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: fontCssUrl([family]) });
+      link.onload = resolve;
+      link.onerror = () => { cssLoaded.delete(family); resolve(); };
+      document.head.appendChild(link);
+    }));
+  }
+  return cssLoaded.get(family);
+}
 
 /**
  * Make sure the browser has the glyphs for these text objects, then re-measure
@@ -56,11 +136,11 @@ export const weightsOf = (family) => Object.keys(FONTS[family] || {}).map(Number
  */
 export async function ensureFontsLoaded(objects) {
   const jobs = [];
-  const families = new Set();
+  const families = new Set(objects.filter((o) => o.text).map((o) => o.fontFamily));
+  await Promise.all([...families].map(loadFontCss));
   for (const o of objects) {
     if (!o.text) continue;
-    families.add(o.fontFamily);
-    const font = `${normalizeWeight(o.fontWeight)} 32px "${o.fontFamily}"`;
+    const font = `${normalizeWeight(o.fontWeight, o.fontFamily)} 32px "${o.fontFamily}"`;
     jobs.push(document.fonts.load(font, o.text).then(() => (document.fonts.check(font, o.text) ? null : font), () => font));
   }
   const failed = [...new Set((await Promise.all(jobs)).filter(Boolean))];
@@ -92,8 +172,11 @@ let hbModule;
  * Cut a font down to just the characters in `text` using HarfBuzz.
  * A CJK font is 7–10 MB; the subset is usually a few KB.
  * (pdf-lib's own `subset: true` drops CJK glyphs, so we don't use it.)
+ * `retainGids` keeps every glyph's original number (unused ones empty). It is
+ * slower and bigger before pdf-lib compresses it, but some fonts (the Chiron
+ * family) otherwise produce a last glyph that pdf-lib's fontkit can't read.
  */
-export async function subsetFont(fontBuffer, text) {
+export async function subsetFont(fontBuffer, text, { retainGids = false } = {}) {
   hbModule ||= WebAssembly.compileStreaming(fetch(HB_SUBSET_WASM)).catch((e) => { hbModule = null; throw e; });
   const instance = await WebAssembly.instantiate(await hbModule);
   const e = instance.exports;
@@ -105,7 +188,7 @@ export async function subsetFont(fontBuffer, text) {
   const input = e.hb_subset_input_create_or_fail();
   const unicodes = e.hb_subset_input_unicode_set(input);
   for (const ch of new Set(text + ' ')) e.hb_set_add(unicodes, ch.codePointAt(0));
-  e.hb_subset_input_set_flags(input, e.hb_subset_input_get_flags(input) | 1 /* NO_HINTING */);
+  e.hb_subset_input_set_flags(input, e.hb_subset_input_get_flags(input) | 1 /* NO_HINTING */ | (retainGids ? 2 /* RETAIN_GIDS */ : 0));
   const sub = e.hb_subset_or_fail(face, input);
   e.hb_subset_input_destroy(input);
   if (!sub) throw new Error(t('errSubset'));

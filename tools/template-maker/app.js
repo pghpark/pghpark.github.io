@@ -3,7 +3,9 @@ import { t, applyI18n, setLang, getLang, LANGS } from './i18n.js';
 import {
   fileToCanvas, urlToCanvas, cloneCanvas, eraseText, estimateTextColor, canvasToBlob, inkBounds, backgroundBusyness, letterMask, sampleRing,
 } from './imaging.js';
-import { FONTS, DEFAULT_FAMILY, ensureFontsLoaded, normalizeWeight, weightsOf } from './fonts.js';
+import {
+  FONTS, DEFAULT_FAMILY, MATCH_FAMILIES, ensureFontsLoaded, normalizeWeight, weightsOf, isBold, loadFontCss,
+} from './fonts.js';
 import {
   exportRaster, exportSVG, exportPDF, exportPSD, exportPPTX, download, safeFilename, isText,
 } from './export.js';
@@ -316,7 +318,7 @@ const measureCtx = document.createElement('canvas').getContext('2d');
 
 /** Ink box of `text` in the editor font at 100 px (letter shapes, not the em box). */
 function inkAt100(text, o) {
-  measureCtx.font = `${normalizeWeight(o.fontWeight)} 100px "${o.fontFamily}"`;
+  measureCtx.font = `${normalizeWeight(o.fontWeight, o.fontFamily)} 100px "${o.fontFamily}"`;
   const m = measureCtx.measureText(text);
   return {
     left: m.actualBoundingBoxLeft, // distance the ink starts left of the pen (negative = right)
@@ -395,8 +397,9 @@ function matchFont(text, photoMask) {
   const { w, h, data } = photoMask;
   let best = null;
   let defaultScore = 0;
-  for (const family of Object.keys(FONTS)) {
-    for (const weight of weightsOf(family)) {
+  // Shape is compared at regular and bold only; the exact weight comes from guessWeight.
+  for (const family of MATCH_FAMILIES) {
+    for (const weight of weightsOf(family).filter((k) => k === 400 || k === 700)) {
       const m = renderedMask(text, family, weight, w, h);
       if (!m) continue;
       const score = maskSimilarity(data, m, w, h);
@@ -417,15 +420,26 @@ function matchFont(text, photoMask) {
 
 /**
  * Bold or regular? Compare how much of the letter box the original's strokes
- * cover with how much Noto's regular and bold weights cover for the same text,
- * and pick the closer one.
+ * cover with how much the family's regular and bold weights cover for the same
+ * text, and pick the closer one. Large lettering may then step on to Black or
+ * Light; small text looks heavier than it is (blurred edges), so it doesn't.
  */
+const EXTREME_WEIGHT_MIN_SIZE = 40;
 function guessWeight(text, family, fs, photoDensity) {
   if (!photoDensity || fs < 8) return 400;
-  const regular = inkDensity(text, family, 400, fs);
-  const bold = inkDensity(text, family, 700, fs);
-  if (!regular || !bold) return 400;
-  return Math.abs(photoDensity - bold) < Math.abs(photoDensity - regular) ? 700 : 400;
+  const density = (w) => inkDensity(text, family, w, fs);
+  const closer = (a, b) => {
+    const da = density(a); const db = density(b);
+    if (!da || !db) return a;
+    return Math.abs(photoDensity - db) < Math.abs(photoDensity - da) ? b : a;
+  };
+  const weights = weightsOf(family);
+  let w = weights.includes(700) ? closer(400, 700) : 400;
+  if (fs >= EXTREME_WEIGHT_MIN_SIZE) {
+    if (w === 700 && weights.includes(900)) w = closer(700, 900);
+    if (w === 400 && weights.includes(300)) w = closer(400, 300);
+  }
+  return w;
 }
 
 /** Put a one-line text's letters (ink) centred on (cx, cy) at font size fs, and remember where they are. */
@@ -508,7 +522,7 @@ function textFromLine(line, color) {
       // was right more often (79% vs 73% on the benchmark).
       const match = matchFont(line.text, line.mask);
       if (match) o.set({ fontFamily: match.family });
-      if (line.bbox.density && weightsOf(o.fontFamily).includes(700)) {
+      if (line.bbox.density && weightsOf(o.fontFamily).length > 1) {
         const approx = (bh * 100) / Math.max(inkAt100(line.text, o).height, 1);
         o.set({ fontWeight: guessWeight(line.text, o.fontFamily, approx, line.bbox.density) });
       } else {
@@ -562,7 +576,8 @@ async function convertLines(lines) {
   });
   // Every candidate font needs these characters loaded before comparing shapes.
   const allText = fitted.map((l) => l.text).join('');
-  await Promise.allSettled(Object.keys(FONTS).flatMap((f) => weightsOf(f).map((w) => document.fonts.load(`${w} 40px "${f}"`, allText))));
+  await Promise.all(MATCH_FAMILIES.map(loadFontCss));
+  await Promise.allSettled(MATCH_FAMILIES.flatMap((f) => weightsOf(f).map((w) => document.fonts.load(`${w} 40px "${f}"`, allText))));
   const built = fitted.map((l) => textFromLine(l, estimateTextColor(state.original, l.bbox)));
   await ensureFontsLoaded(built.map((b) => b.obj));
   built.forEach((b) => b.fit(b.obj));
@@ -701,7 +716,7 @@ function renderProps() {
   const ta = $('#propText');
   if (document.activeElement !== ta) ta.value = o.vertical ? fromVertical(o.text) : o.text;
   $('#propFont').value = FONTS[o.fontFamily] ? o.fontFamily : DEFAULT_FAMILY;
-  $('#propBold').checked = normalizeWeight(o.fontWeight) === 700;
+  renderWeights(o);
   $('#propSize').value = Math.round(o.fontSize * o.scaleY);
   $('#propColor').value = typeof o.fill === 'string' && /^#[0-9a-f]{6}$/i.test(o.fill) ? o.fill : new fabric.Color(o.fill).toHex().replace(/^#?/, '#');
   $('#propLine').value = o.lineHeight;
@@ -728,8 +743,14 @@ $('#propText').addEventListener('input', (e) => {
   if (!o) return;
   updateActive({ text: o.vertical ? toVertical(e.target.value) : e.target.value }).then(() => { refitIfAuto(o); canvas.requestRenderAll(); renderQuickEdit(); });
 });
-$('#propFont').addEventListener('change', (e) => updateActive({ fontFamily: e.target.value }));
-$('#propBold').addEventListener('change', (e) => updateActive({ fontWeight: e.target.checked ? 700 : 400 }));
+$('#propFont').addEventListener('change', async (e) => {
+  const o = active();
+  const family = e.target.value;
+  await loadFontCss(family);
+  await updateActive({ fontFamily: family, fontWeight: normalizeWeight(o?.fontWeight, family) });
+  if (o) renderWeights(o);
+});
+$('#propWeight').addEventListener('change', (e) => updateActive({ fontWeight: Number(e.target.value) }));
 $('#propSize').addEventListener('change', (e) => {
   const v = Number(e.target.value);
   if (v > 0) updateActive({ fontSize: v, scaleX: 1, scaleY: 1, autoFit: false });
@@ -759,7 +780,7 @@ function renderQuickEdit() {
   if (document.activeElement !== ta) ta.value = o.vertical ? fromVertical(o.text) : o.text;
   if (document.activeElement !== $('#qeSize')) $('#qeSize').value = Math.round(o.fontSize * o.scaleY);
   $('#qeColor').value = $('#propColor').value;
-  $('#qeBold').setAttribute('aria-pressed', String(normalizeWeight(o.fontWeight) === 700));
+  $('#qeBold').setAttribute('aria-pressed', String(isBold(o.fontWeight)));
   $('#qeVertical').setAttribute('aria-pressed', String(Boolean(o.vertical)));
   $('#qeKeep').hidden = !o.eraseBox;
   box.hidden = false;
@@ -814,7 +835,7 @@ $('#qeSize').addEventListener('change', (e) => {
 $('#qeColor').addEventListener('input', (e) => { updateActive({ fill: e.target.value }, { remeasure: false }); $('#propColor').value = e.target.value; });
 $('#qeBold').addEventListener('click', () => {
   const o = active();
-  if (o) updateActive({ fontWeight: normalizeWeight(o.fontWeight) === 700 ? 400 : 700 }).then(renderProps);
+  if (o) updateActive({ fontWeight: normalizeWeight(isBold(o.fontWeight) ? 400 : 700, o.fontFamily) }).then(renderProps);
 });
 $('#qeVertical').addEventListener('click', () => { const o = active(); if (o) setVertical(!o.vertical); });
 $('#qeDelete').addEventListener('click', () => { const o = active(); if (o) canvas.remove(o); });
@@ -1168,13 +1189,40 @@ function updateSaveTitle() {
   $('#saveBtn').title = t(state.user ? 'saveTitleCloud' : 'saveTitleLocal');
 }
 
-const FONT_LABELS = { 'Noto Sans TC': 'fontSans', 'Noto Serif TC': 'fontSerif', Huninn: 'fontHuninn', Iansui: 'fontIansui' };
+const FONT_LABELS = {
+  'Noto Sans TC': 'fontSans', 'Noto Serif TC': 'fontSerif', Huninn: 'fontHuninn', Iansui: 'fontIansui',
+  'LXGW WenKai TC': 'fontWenkai', 'Cactus Classical Serif': 'fontCactus', 'Chocolate Classical Sans': 'fontChocolate',
+  'Chiron Hei HK': 'fontChironHei', 'Chiron Sung HK': 'fontChironSung', 'Chiron GoRound TC': 'fontChironRound',
+  'LXGW Marker Gothic': 'fontMarker',
+};
+const FORMS_LABELS = { inherited: 'formsInherited', hk: 'formsHk', jp: 'formsJp' };
 
 /** Dropdowns whose option text comes from code rather than index.html. */
 function renderOptions() {
   const font = $('#propFont').value;
-  $('#propFont').replaceChildren(...Object.keys(FONTS).map((f) => new Option(FONT_LABELS[f] ? t(FONT_LABELS[f]) : f, f)));
+  const group = (label, families) => {
+    const g = document.createElement('optgroup');
+    g.label = label;
+    g.append(...families.map((f) => {
+      const forms = FORMS_LABELS[FONTS[f].forms];
+      return new Option(`${FONT_LABELS[f] ? t(FONT_LABELS[f]) : f}${forms ? ` · ${t(forms)}` : ''}`, f);
+    }));
+    return g;
+  };
+  $('#propFont').replaceChildren(
+    group(t('fontsTaiwan'), MATCH_FAMILIES),
+    group(t('fontsOther'), Object.keys(FONTS).filter((f) => !MATCH_FAMILIES.includes(f))),
+  );
   if (font) $('#propFont').value = font;
+  const o = active();
+  if (o) renderWeights(o);
+}
+
+/** The weight menu lists only the weights the chosen family really has. */
+function renderWeights(o) {
+  const family = FONTS[o.fontFamily] ? o.fontFamily : DEFAULT_FAMILY;
+  $('#propWeight').replaceChildren(...weightsOf(family).map((k) => new Option(t(`weight${k}`), k)));
+  $('#propWeight').value = String(normalizeWeight(o.fontWeight, family));
 }
 
 /**
