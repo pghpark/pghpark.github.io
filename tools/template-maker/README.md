@@ -35,7 +35,7 @@ detection, use a sharp, well-lit photo taken straight on, with printed (not hand
 1. **Upload a photo** (**New template from photo**, drag-and-drop, or paste). Large photos are scaled to 2400 px on the long side.
 2. **Find and read every piece of text** with [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) PP-OCRv5 (Apache-2.0), running in the browser through ONNX Runtime Web (see *How text is found* below).
 3. **Remove the original text** from the background. Only the letter strokes are repainted, from the pixels around them, so artwork behind or next to the text isn't smeared. Hold **Hold to see original** to compare with the untouched photo.
-4. **Edit.** Each line becomes a text box whose letters cover the original's: the same letter height, line width (through letter spacing), position, colour and bold/regular weight. Tap a box for the pop-up editor (text, size, colour, bold, vertical, delete), or use the side panel for everything else. After you correct a misread, the line re-fits itself to the original area. Pinch or Ctrl + scroll to zoom.
+4. **Edit.** Each line becomes a text box whose letters cover the original's: the same letter height, line width (through letter spacing), position, colour and bold/regular weight. Tap a box for the pop-up editor (text, size, colour, bold, vertical, keep as picture, delete), or use the side panel for everything else. After you correct a misread, the line re-fits itself to the original area. Pinch or Ctrl + scroll to zoom.
 5. **Save** to this browser (IndexedDB), or to the cloud once Supabase is set up (below).
 6. **Export:**
 
@@ -63,7 +63,9 @@ detection, use a sharp, well-lit photo taken straight on, with printed (not hand
 - **Finding and reading text:** PaddleOCR PP-OCRv5 (mobile models, from npm `pdfmarkdown-ppocrv5-models`, served by jsDelivr). A detection model finds every text region, in any layout including vertical; a recognition model then reads each region. Vertical regions are rotated first, as PaddleOCR does. One model reads Traditional and Simplified Chinese, English and Japanese, with an 18,384-character dictionary.
 - **Taiwan forms:** occasional Simplified outputs (国, 创) are converted with [OpenCC](https://github.com/BYVoid/OpenCC) (Mainland → Taiwan characters, no vocabulary changes); 台 is kept as written.
 - **Unreadable areas** (below 50% reading confidence, usually logos or tiny print) are left as in the photo rather than replaced with gibberish.
-- **Sizing:** each new line is fitted to the original letters' pixel bounds (not the OCR box). Letter height sets the font size, letter spacing absorbs width differences, and bold or regular is chosen by comparing stroke coverage. Overlapping display lettering is shrunk just enough not to collide.
+- **Text inside pictures** (a shop sign, a banner someone holds) is spotted by its busy surroundings. Because that guess is wrong now and then, the app lists these lines with a tick box each and converts only the ticked ones. Any converted line can be put back as picture with the picture button in the pop-up editor (**↶ Erase** undoes that).
+- **Sizing:** each new line is fitted to the original letters' pixel bounds (not the OCR box); vertical columns are measured column by column. Letter height sets the font size, letter spacing absorbs width differences, and bold or regular is chosen by comparing stroke coverage. Overlapping display lettering is shrunk just enough not to collide.
+- **Font:** the original letters are compared, shape against shape, with the same text drawn in each library font (Noto Sans TC, Noto Serif TC, Huninn 粉圓, Iansui 芫荽, all Taiwan standard forms), and the closest wins.
 - **Fallback:** if PaddleOCR can't load (very old browsers), Tesseract.js is used instead.
 - **Download size:** about 35 MB on first use (ONNX Runtime ~14 MB, models ~21 MB), then cached by the browser.
 
