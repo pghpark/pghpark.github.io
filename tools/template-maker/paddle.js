@@ -11,7 +11,7 @@ const MODELS = 'https://cdn.jsdelivr.net/npm/pdfmarkdown-ppocrv5-models@1.0.0';
 const ORT_WASM = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/';
 
 // PaddleOCR defaults (PaddleX PP-OCRv5 inference.yml).
-const DET = { limitSide: 960, maxSide: 1600, thresh: 0.3, boxThresh: 0.6, unclip: 2.0, mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225] };
+const DET = { limitSide: 960, maxSide: 2400, fineSide: 1920, smallText: 48, thresh: 0.3, boxThresh: 0.6, unclip: 2.0, mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225] };
 const REC_HEIGHT = 48;
 
 const ORT_JS = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ort.min.js';
@@ -97,10 +97,9 @@ function toTensor(ctx, w, h, mean, std) {
  * like PaddleOCR's DBPostProcess it is scored by its mean probability and
  * expanded by area × unclip / perimeter.
  */
-async function detect(session, source) {
-  // Work at 960–1600 px on the long side: enough for small print, fast on phones.
+async function detect(session, source, side) {
   const long = Math.max(source.width, source.height);
-  const s = Math.min(DET.maxSide, Math.max(DET.limitSide, long)) / long;
+  const s = side / long;
   const w = Math.max(32, Math.round((source.width * s) / 32) * 32);
   const h = Math.max(32, Math.round((source.height * s) / 32) * 32);
   const c = canvasOf(w, h);
@@ -189,15 +188,53 @@ export async function paddleDetect(source, { onProgress } = {}) {
   const notify = onProgress || (() => {});
   const { det, rec, chars, cn2tw } = await load(notify);
   notify({ status: 'finding text', progress: 0 });
-  const boxes = await detect(det, source);
-  const lines = [];
-  for (let i = 0; i < boxes.length; i++) {
-    const r = await recognize(rec, chars, source, boxes[i]);
-    notify({ status: 'reading text', progress: (i + 1) / boxes.length });
-    // A few non-text marks get a box and a near-zero score ("C" at 4%).
-    if (r.text && r.confidence >= 20) lines.push({ ...r, text: toTaiwan(r.text, cn2tw), bbox: boxes[i], detScore: boxes[i].score });
+  // Two passes. At the photo's own size (960–2400 px on the long side) display
+  // lettering is found whole. Small print also needs an enlarged pass: at the
+  // smaller size the first or last character of a small line is often missed
+  // (benchmark: 69.5% → 72.8% of characters read). Enlarging splits big
+  // lettering, though, so the enlarged pass only adds or improves small text.
+  const long = Math.max(source.width, source.height);
+  const side = Math.min(DET.maxSide, Math.max(DET.limitSide, long));
+  const passes = [await detect(det, source, side)];
+  if (DET.fineSide / side >= 1.25) passes.push(await detect(det, source, DET.fineSide));
+  const total = passes[0].length + (passes[1]?.length || 0);
+  let done = 0;
+  const read = [];
+  for (const boxes of passes) {
+    const lines = [];
+    for (const box of boxes) {
+      const r = await recognize(rec, chars, source, box);
+      notify({ status: 'reading text', progress: ++done / total });
+      // A few non-text marks get a box and a near-zero score ("C" at 4%).
+      if (r.text && r.confidence >= 20) lines.push({ ...r, text: toTaiwan(r.text, cn2tw), bbox: box, detScore: box.score });
+    }
+    read.push(lines);
   }
-  return dropRepeats(mergePieces(lines));
+  return dropRepeats(mergePieces(read.length > 1 ? combinePasses(read[0], read[1]) : read[0]));
+}
+
+/**
+ * Merge the normal and the enlarged pass. Big text always comes from the
+ * normal pass. A small line from the enlarged pass replaces the normal-pass
+ * line it overlaps when it reads more characters (or the same number, more
+ * confidently), and is added when the normal pass found nothing there.
+ */
+function combinePasses(base, fine) {
+  const area = (b) => Math.max(0, b.x1 - b.x0) * Math.max(0, b.y1 - b.y0);
+  const overlap = (a, b) => area({ x0: Math.max(a.x0, b.x0), y0: Math.max(a.y0, b.y0), x1: Math.min(a.x1, b.x1), y1: Math.min(a.y1, b.y1) });
+  const thick = (l) => Math.min(l.bbox.x1 - l.bbox.x0, l.bbox.y1 - l.bbox.y0);
+  const len = (l) => [...l.text.replace(/\s/g, '')].length;
+  const out = [...base];
+  for (const f of fine) {
+    if (thick(f) >= DET.smallText) continue;
+    const hits = out.filter((b) => overlap(b.bbox, f.bbox) >= 0.5 * Math.min(area(b.bbox), area(f.bbox)));
+    if (!hits.length) { out.push(f); continue; }
+    if (hits.some((b) => thick(b) >= DET.smallText)) continue;
+    const hitLen = hits.reduce((n, b) => n + len(b), 0);
+    const better = len(f) > hitLen || (len(f) === hitLen && hits.length === 1 && f.confidence > hits[0].confidence);
+    if (better) { for (const b of hits) out.splice(out.indexOf(b), 1); out.push(f); }
+  }
+  return out;
 }
 
 /**

@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&family=Noto+Serif+TC:wght@400;700&family=Huninn&family=Iansui&display=swap">
-  <link rel="stylesheet" href="style.css?v=2026-10-02.6">
+  <link rel="stylesheet" href="style.css?v=2026-10-02.7">
   <!-- Versions are pinned; see README.md before upgrading (Fabric 7 changed text positioning). -->
   <script src="https://cdn.jsdelivr.net/npm/fabric@7.4.0/dist/index.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js"></script>
@@ -20,18 +20,18 @@
        (GitHub Pages lets browsers cache each file for 10 minutes). -->
   <script type="importmap">
     {"imports": {
-      "./app.js": "./app.js?v=2026-10-02.6",
-      "./i18n.js": "./i18n.js?v=2026-10-02.6",
-      "./ocr.js": "./ocr.js?v=2026-10-02.6",
-      "./imaging.js": "./imaging.js?v=2026-10-02.6",
-      "./fonts.js": "./fonts.js?v=2026-10-02.6",
-      "./export.js": "./export.js?v=2026-10-02.6",
-      "./storage.js": "./storage.js?v=2026-10-02.6",
-      "./config.js": "./config.js?v=2026-10-02.6",
-      "./paddle.js": "./paddle.js?v=2026-10-02.6"
+      "./app.js": "./app.js?v=2026-10-02.7",
+      "./i18n.js": "./i18n.js?v=2026-10-02.7",
+      "./ocr.js": "./ocr.js?v=2026-10-02.7",
+      "./imaging.js": "./imaging.js?v=2026-10-02.7",
+      "./fonts.js": "./fonts.js?v=2026-10-02.7",
+      "./export.js": "./export.js?v=2026-10-02.7",
+      "./storage.js": "./storage.js?v=2026-10-02.7",
+      "./config.js": "./config.js?v=2026-10-02.7",
+      "./paddle.js": "./paddle.js?v=2026-10-02.7"
     }}
   </script>
-  <script type="module" src="app.js?v=2026-10-02.6"></script>
+  <script type="module" src="app.js?v=2026-10-02.7"></script>
 </head>
 <body>
   <header class="topbar">
@@ -44,7 +44,7 @@
       <span class="with-info">
         <label data-tip="newFromPhoto" class="btn lg primary">
           <input id="fileInput" type="file" accept="image/*,.heic,.heif,.avif" hidden>
-          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M21 16l-5-5-8 8"/><path d="M19 2v6M16 5h6"/></svg><span data-i18n="newFromPhoto">New template from photo</span>
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M21 16l-5-5-8 8"/><path d="M19 2v6M16 5h6"/></svg><span data-i18n="newFromPhoto">Upload a photo</span>
         </label>
       </span>
       <span class="with-info"><button data-tip="open" id="openBtn" class="btn lg"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span data-i18n="open">Open templates</span></button></span>
@@ -81,7 +81,7 @@
     <section id="stage" class="stage">
       <label id="emptyState" class="empty" for="fileInput">
         <span class="empty-title" data-i18n="dropTitle">Drop a photo here</span>
-        <span data-i18n-html="dropHow">or paste an image (Ctrl+V), or click <b>New template from photo</b>.</span>
+        <span data-i18n-html="dropHow">or paste an image (Ctrl+V), or click <b>Upload a photo</b>.</span>
         <span class="muted" data-i18n="dropAbout">The text in the photo becomes editable text boxes. Traditional Chinese (繁體中文) and English are detected.</span>
         <span class="empty-note" data-i18n-html="dropFormats"><b>Formats:</b> JPG, PNG, WebP, GIF, BMP or AVIF. iPhone HEIC photos open in Safari only; in other browsers, save them as JPG first.</span>
         <span class="empty-note" data-i18n-html="dropTips"><b>Best results:</b> a sharp, well-lit photo taken straight on, with printed (not handwritten) text.</span>
