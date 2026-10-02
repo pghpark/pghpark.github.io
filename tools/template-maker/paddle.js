@@ -75,6 +75,7 @@ const OPENCC_JS = 'https://cdn.jsdelivr.net/npm/opencc-js@1.4.2/dist/umd/cn2t.js
 function loadScript(src) {
   return new Promise((resolve, reject) => {
     const el = document.createElement('script');
+    el.crossOrigin = 'anonymous'; // a CORS response can be stored for offline use
     el.src = src;
     el.onload = resolve;
     el.onerror = () => reject(new Error(`Could not load ${src}`));
@@ -88,6 +89,10 @@ async function load(report) {
     if (!self.ort) await loadScript(ORT_JS);
     ort.env.wasm.wasmPaths = ORT_WASM;
     ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 1) : 1;
+    // Run the models in a background worker, so the page keeps responding
+    // (on a phone the work takes a minute or more).
+    ort.env.wasm.proxy = true;
+    await self.templateMakerOffline; // see app.js: lets the offline store keep this download
     const fetchBytes = downloader(report);
     // If this fails, the runtime fetches its engine itself (just without progress).
     const wasm = fetchBytes(ORT_WASM_FILE).catch(() => null);
@@ -103,6 +108,7 @@ async function load(report) {
         const engine = await wasm;
         if (engine) ort.env.wasm.wasmBinary = engine;
         [det, rec] = await Promise.all([ort.InferenceSession.create(detBytes, opts), ort.InferenceSession.create(recBytes, opts)]);
+        ort.env.wasm.wasmBinary = undefined; // the worker has its own copy now; free this page's 28 MB
         // CTC: index 0 is "blank", then the dictionary, then a space. A .json
         // dictionary is {"characters": [...]}; a .txt one has one character per
         // line (the v5 export also has a stray empty line that is not a class).
@@ -150,7 +156,7 @@ function toTensor(ctx, w, h, mean, std, x = 0, y = 0) {
  * like PaddleOCR's DBPostProcess it is scored by its mean probability and
  * expanded by area × unclip / perimeter.
  */
-async function detect(session, source, side, { tiled = false } = {}) {
+async function detect(session, source, side, { tiled = false, onTile = () => {} } = {}) {
   const long = Math.max(source.width, source.height);
   const s = side / long;
   const w = Math.max(32, Math.round((source.width * s) / 32) * 32);
@@ -165,8 +171,10 @@ async function detect(session, source, side, { tiled = false } = {}) {
   const prob = new Float32Array(w * h);
   const T = tiled ? DET.tile : Infinity; const M = DET.tileMargin;
   const starts = (n) => { const out = []; for (let p = 0; ; p += T - 2 * M) { out.push(Math.max(0, Math.min(p, n - T))); if (p + T >= n) break; } return [...new Set(out)]; };
-  for (const ty of h <= T ? [0] : starts(h)) {
-    for (const tx of w <= T ? [0] : starts(w)) {
+  const ys = h <= T ? [0] : starts(h); const xs = w <= T ? [0] : starts(w);
+  let tile = 0;
+  for (const ty of ys) {
+    for (const tx of xs) {
       const tw = Math.min(T, w); const th = Math.min(T, h);
       const out = await session.run({ [session.inputNames[0]]: toTensor(ctx, tw, th, DET.mean, DET.std, tx, ty) });
       const t = out[session.outputNames[0]];
@@ -175,6 +183,7 @@ async function detect(session, source, side, { tiled = false } = {}) {
       const ix1 = tx + tw >= w ? tw : tw - M; const iy1 = ty + th >= h ? th : th - M;
       for (let y = iy0; y < iy1; y++) prob.set(t.data.subarray(y * tw + ix0, y * tw + ix1), (ty + y) * w + tx + ix0);
       t.dispose?.();
+      onTile(++tile / (ys.length * xs.length));
     }
   }
   // Connected components on the thresholded map (4-neighbour flood fill).
@@ -211,6 +220,7 @@ async function detect(session, source, side, { tiled = false } = {}) {
       score,
     });
   }
+  c.width = 0; c.height = 0; // free the working canvas now (Safari caps page canvas memory)
   return boxes;
 }
 
@@ -237,6 +247,7 @@ async function recognize(session, chars, source, box, among = null) {
   }
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   const input = toTensor(ctx, W, REC_HEIGHT, [0.5, 0.5, 0.5], [0.5, 0.5, 0.5]);
+  c.width = 0; c.height = 0;
   const out = await session.run({ [session.inputNames[0]]: input });
   const t = out[session.outputNames[0]];
   const [, steps, classes] = t.dims;
@@ -281,9 +292,12 @@ export async function paddleDetect(source, { onProgress } = {}) {
   const long = Math.max(source.width, source.height);
   const aspect = Math.min(source.width, source.height) / long;
   const side = Math.min(DET.maxSide, Math.max(DET.limitSide, long), Math.sqrt(DET.wholeArea / aspect));
-  const passes = [await detect(det, source, side)];
   const fine = Math.min(DET.maxSide, Math.max(DET.fineSide, long));
-  if (fine / side >= 1.25) passes.push(await detect(det, source, fine, { tiled: true }));
+  const twoPasses = fine / side >= 1.25;
+  // The larger pass has about (fine/side)² times the work.
+  const share = twoPasses ? 1 / (1 + (fine / side) ** 2) : 1;
+  const passes = [await detect(det, source, side, { onTile: (f) => notify({ status: 'finding text', progress: f * share }) })];
+  if (twoPasses) passes.push(await detect(det, source, fine, { tiled: true, onTile: (f) => notify({ status: 'finding text', progress: share + f * (1 - share) }) }));
   const total = passes[0].length + (passes[1]?.length || 0);
   let done = 0;
   const read = [];
@@ -477,6 +491,7 @@ async function readBadges(source, lines, read) {
     cc.putImageData(img, side / 2, side / 2);
     // Beside a date, a badge is the day of the week.
     const r = await read(crop, { x0: 0, y0: 0, x1: crop.width, y1: crop.height }, WEEKDAYS);
+    crop.width = 0; crop.height = 0;
     const ch = r.text;
     if (!ch || r.confidence < 15) continue; // low is fine: a disc beside a date is already strong evidence
     const inner = { x0: rx0 + disc.cx - side / 2, y0: ry0 + disc.cy - side / 2, x1: rx0 + disc.cx + side / 2, y1: ry0 + disc.cy + side / 2, score: 1 };

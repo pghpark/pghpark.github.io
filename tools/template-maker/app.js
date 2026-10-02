@@ -52,6 +52,12 @@ fabric.InteractiveFabricObject.ownDefaults.cornerSize = 10;
 /* ---------------- UI helpers ---------------- */
 
 let toastTimer;
+// iPhone Safari only shows :active (the pressed look) when the page listens for touches.
+document.addEventListener('touchstart', () => {}, { passive: true });
+// A little vibration when a button is pressed (Android).
+document.addEventListener('pointerdown', (e) => { if (e.pointerType === 'touch' && e.target.closest?.('.btn:not(:disabled)')) navigator.vibrate?.(8); }, { passive: true });
+$('#toast').addEventListener('click', () => { $('#toast').hidden = true; });
+
 function toast(msg, kind = 'info', ms = 3500) {
   const el = $('#toast');
   el.textContent = msg;
@@ -667,24 +673,36 @@ function splitStackedLines(lines) {
   }
 }
 
-/** A copy of the photo with a date's badge disc painted in the background colour. */
-function withoutDisc(src, line) {
+/**
+ * One copy of the photo with every date's badge disc painted in the date's
+ * background colour (one copy for all dates: a full-size canvas is 17 MB, and
+ * iPhone Safari caps the canvas memory a page may hold). Release it with
+ * releaseCanvas when done.
+ */
+function withoutDiscs(src, lines) {
   const c = cloneCanvas(src);
   const g = c.getContext('2d');
-  const bg = sampleRing(src, line.bbox, 2);
-  g.fillStyle = `rgb(${bg.join(',')})`;
-  g.beginPath();
-  g.arc(line.disc.cx, line.disc.cy, line.disc.r * 1.08, 0, 2 * Math.PI);
-  g.fill();
+  for (const line of lines) {
+    const bg = sampleRing(src, line.bbox, 2);
+    g.fillStyle = `rgb(${bg.join(',')})`;
+    g.beginPath();
+    g.arc(line.disc.cx, line.disc.cy, line.disc.r * 1.08, 0, 2 * Math.PI);
+    g.fill();
+  }
   return c;
 }
 
+/** Give a temporary canvas's memory back now (Safari otherwise frees it late). */
+const releaseCanvas = (c) => { if (c) { c.width = 0; c.height = 0; } };
+
 async function convertLines(lines) {
   // Fit new text to the letters themselves, not to the OCR box around them.
+  // A date with a weekday badge beside it is measured with the badge's disc
+  // painted out, so the disc doesn't count as part of its letters.
+  const dated = lines.filter((l) => l.disc);
+  const noDiscs = dated.length ? withoutDiscs(state.original, dated) : null;
   const fitted = lines.map((l) => {
-    // A date with a weekday badge beside it is measured with the badge's disc
-    // painted out, so the disc doesn't count as part of its letters.
-    const src = l.disc ? withoutDisc(state.original, l) : state.original;
+    const src = l.disc ? noDiscs : state.original;
     const han = [...l.text].filter((ch) => /\p{Script=Han}/u.test(ch)).length;
     const bbox = inkBounds(src, l.bbox, { vertical: l.vertical, color: l.badge ? hexOf(l.badge.ink) : null, cjk: han >= 0.5 * [...l.text.replace(/\s/g, '')].length });
     return { ...l, src, bbox };
@@ -723,6 +741,7 @@ async function convertLines(lines) {
     g.arc(l.badge.cx, l.badge.cy, l.badge.r * 0.92, 0, 2 * Math.PI);
     g.fill();
   }
+  releaseCanvas(noDiscs);
   return built.map((b) => b.obj);
 }
 
@@ -1209,8 +1228,20 @@ async function save() {
     state.origDirty = false;
     state.dirty = false;
     updateTitle();
-    toast(t('saved', { where: t(store.whereKey) }), 'ok');
+    toast(t('saved', { where: t(store.whereKey) }), 'ok', 6000);
+    confirmOnButton($('#saveBtn'), t('savedShort'));
   });
+}
+
+/** Show a short confirmation on the button itself ("✓ Saved"), then put it back. */
+function confirmOnButton(btn, text) {
+  const label = btn.querySelector('[data-i18n]');
+  if (!label) return;
+  clearTimeout(btn.doneTimer);
+  label.textContent = text;
+  btn.classList.add('done');
+  navigator.vibrate?.([12, 60, 24]); // Android; iPhone browsers don't vibrate for web pages
+  btn.doneTimer = setTimeout(() => { btn.classList.remove('done'); label.textContent = t(label.dataset.i18n); }, 3000);
 }
 
 async function openRecord(rec, homeKey) {
@@ -1564,6 +1595,18 @@ function init() {
   renderProps();
   initCloud();
   window.templateMakerReady = true;
+
+// Offline support (sw.js): after the first use, the app and its text reader
+// open without a connection. Also ask the phone to keep that storage.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').then(() => navigator.storage?.persist?.()).catch(() => {});
+  // The text reader waits (up to 5 s) for the worker to take over this page,
+  // so even the first download of its 60 MB is stored for offline use.
+  self.templateMakerOffline = navigator.serviceWorker.controller ? Promise.resolve() : new Promise((resolve) => {
+    navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true });
+    setTimeout(resolve, 5000);
+  });
+}
 }
 
 init();

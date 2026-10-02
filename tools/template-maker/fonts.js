@@ -120,7 +120,7 @@ export function loadFontCss(family) {
   if (!FONTS[family]) return Promise.resolve();
   if (!cssLoaded.has(family)) {
     cssLoaded.set(family, new Promise((resolve) => {
-      const link = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: fontCssUrl([family]) });
+      const link = Object.assign(document.createElement('link'), { rel: 'stylesheet', crossOrigin: 'anonymous', href: fontCssUrl([family]) });
       link.onload = resolve;
       link.onerror = () => { cssLoaded.delete(family); resolve(); };
       document.head.appendChild(link);

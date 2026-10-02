@@ -32,6 +32,16 @@ It installs like an app, without an app store:
 
 It then opens full screen from its icon (範本製作器). Templates saved in the browser are stored per app: on iPhone the Home Screen app keeps its own, separate from Safari's, so save a template again (or export it as .template.json and open it) to have it in both. Files: `manifest.webmanifest` and `icons/`.
 
+## Offline
+
+After the first use, the app works without a connection (`sw.js`, a service worker):
+
+- The app's own files are always checked with the server when online, so updates arrive the next time it opens; the stored copies are used offline.
+- The pinned libraries, the text reader (models and ONNX Runtime's engine, about 60 MB) and the fonts used are stored on first use and reused after that. The reader waits up to 5 s for the service worker before its first download, so that download is stored too.
+- The app asks the browser to keep this storage (`navigator.storage.persist()`); a browser can still clear it when the phone runs out of space, and the app then downloads again.
+
+The text reader runs in a background worker (ONNX Runtime's proxy mode), so the page keeps responding while a photo is processed.
+
 ## Photo formats
 
 JPG, PNG, WebP, GIF, BMP and AVIF work in every current browser. iPhone **HEIC** photos only open in
@@ -112,6 +122,7 @@ A **Sign in for cloud** button then appears. Once you're signed in, **Save templ
 |---|---|
 | `index.html`, `style.css` | Page and layout. No build step. |
 | `app.js` | Editor: canvas, OCR → text boxes, panel, undo, erase tool, open/save, export menu. |
+| `sw.js` | Service worker: offline use and stored downloads. |
 | `paddle.js` | PaddleOCR PP-OCRv6 detection and recognition with ONNX Runtime Web. |
 | `ocr.js` | Calls PaddleOCR, with a Tesseract.js fallback. |
 | `imaging.js` | Photo loading, text removal, text-colour estimate. |

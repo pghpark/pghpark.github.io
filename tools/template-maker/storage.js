@@ -72,6 +72,7 @@ let clientPromise;
 export function getSupabase() {
   clientPromise ||= new Promise((resolve, reject) => {
     const s = document.createElement('script');
+    s.crossOrigin = 'anonymous';
     s.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js';
     s.onload = () => resolve(window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY));
     s.onerror = () => { clientPromise = null; reject(new Error(t('errSupabase'))); };
