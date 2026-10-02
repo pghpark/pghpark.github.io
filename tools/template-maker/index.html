@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&family=Noto+Serif+TC:wght@400;700&display=swap">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=2026-10-02.3">
   <!-- Versions are pinned; see README.md before upgrading (Fabric 7 changed text positioning). -->
   <script src="https://cdn.jsdelivr.net/npm/fabric@7.4.0/dist/index.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js"></script>
@@ -16,48 +16,62 @@
   <script src="https://cdn.jsdelivr.net/npm/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/ag-psd@31.0.2/dist/bundle.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@4.0.1/dist/pptxgen.bundle.js"></script>
-  <script type="module" src="app.js"></script>
+  <!-- Bump this version on every release so browsers never mix old and new files
+       (GitHub Pages lets browsers cache each file for 10 minutes). -->
+  <script type="importmap">
+    {"imports": {
+      "./app.js": "./app.js?v=2026-10-02.3",
+      "./i18n.js": "./i18n.js?v=2026-10-02.3",
+      "./ocr.js": "./ocr.js?v=2026-10-02.3",
+      "./imaging.js": "./imaging.js?v=2026-10-02.3",
+      "./fonts.js": "./fonts.js?v=2026-10-02.3",
+      "./export.js": "./export.js?v=2026-10-02.3",
+      "./storage.js": "./storage.js?v=2026-10-02.3",
+      "./config.js": "./config.js?v=2026-10-02.3"
+    }}
+  </script>
+  <script type="module" src="app.js?v=2026-10-02.3"></script>
 </head>
 <body>
   <header class="topbar">
     <a class="brand" href="../../" data-i18n-title="backToBlog" title="Back to the blog">←</a>
     <strong class="app-name" data-i18n="appName">Template Maker</strong>
+    <div id="langToggle" class="lang-toggle" role="group" data-i18n-aria-label="language" aria-label="Language"><button type="button" data-lang="en" lang="en-GB" aria-pressed="true">EN</button><button type="button" data-lang="zh" lang="zh-Hant-TW" aria-pressed="false">繁中</button></div>
     <input id="docName" class="doc-name" data-i18n-aria-label="templateName" data-i18n-placeholder="untitled" aria-label="Template name" placeholder="Untitled" data-needs-doc>
 
     <div class="actions">
       <span class="with-info">
-        <label class="btn lg primary">
+        <label data-tip="newFromPhoto" class="btn lg primary">
           <input id="fileInput" type="file" accept="image/*,.heic,.heif,.avif" hidden>
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M21 16l-5-5-8 8"/><path d="M19 2v6M16 5h6"/></svg><span data-i18n="newFromPhoto">New template from photo</span>
-        </label><button type="button" class="info" data-info="newFromPhoto" data-i18n-aria-label="moreInfo" aria-label="More information">i</button>
+        </label>
       </span>
-      <span class="with-info"><button id="openBtn" class="btn lg"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span data-i18n="open">Open templates</span></button><button type="button" class="info" data-info="open" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></span>
-      <span class="with-info"><button id="saveBtn" class="btn lg" data-needs-doc><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h11l3 3v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M7 3v5h8V3M7 21v-7h10v7"/></svg><span data-i18n="save">Save template</span></button><button type="button" class="info" data-info="save" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></span>
+      <span class="with-info"><button data-tip="open" id="openBtn" class="btn lg"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span data-i18n="open">Open templates</span></button></span>
+      <span class="with-info"><button data-tip="save" id="saveBtn" class="btn lg" data-needs-doc><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h11l3 3v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M7 3v5h8V3M7 21v-7h10v7"/></svg><span data-i18n="save">Save template</span></button></span>
       <span class="with-info">
       <details class="menu">
-        <summary class="btn lg" data-needs-doc><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg><span data-i18n="export">Export / Download</span><span class="caret" aria-hidden="true">▾</span></summary>
+        <summary data-tip="export" class="btn lg" data-needs-doc><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg><span data-i18n="export">Export / Download</span><span class="caret" aria-hidden="true">▾</span></summary>
         <div class="menu-body">
-          <div class="menu-row"><button data-export="png" data-i18n="exportPng">PNG image</button><button type="button" class="info" data-info="png" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></div>
-          <div class="menu-row"><button data-export="jpeg" data-i18n="exportJpeg">JPEG image</button><button type="button" class="info" data-info="jpeg" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></div>
-          <div class="menu-row"><button data-export="webp" data-i18n="exportWebp">WebP image</button><button type="button" class="info" data-info="webp" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></div>
-          <label class="menu-option"><span class="label-row"><span data-i18n="imageScale">Image scale</span><button type="button" class="info" data-info="scale" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></span>
+          <div class="menu-row"><button data-tip="png" data-export="png" data-i18n="exportPng">PNG image</button></div>
+          <div class="menu-row"><button data-tip="jpeg" data-export="jpeg" data-i18n="exportJpeg">JPEG image</button></div>
+          <div class="menu-row"><button data-tip="webp" data-export="webp" data-i18n="exportWebp">WebP image</button></div>
+          <label data-tip="scale" class="menu-option"><span class="label-row"><span data-i18n="imageScale">Image scale</span></span>
             <select id="exportScale"><option value="1">1×</option><option value="2">2×</option><option value="3">3×</option></select>
           </label>
           <hr>
-          <div class="menu-row"><button data-export="pdf" data-i18n="exportPdf">PDF (searchable text)</button><button type="button" class="info" data-info="pdf" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></div>
-          <div class="menu-row"><button data-export="pptx" data-i18n="exportPptx">PowerPoint / Canva (.pptx, editable text)</button><button type="button" class="info" data-info="pptx" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></div>
-          <div class="menu-row"><button data-export="psd" data-i18n="exportPsd">Photoshop PSD (editable text layers)</button><button type="button" class="info" data-info="psd" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></div>
-          <div class="menu-row"><button data-export="svg" data-i18n="exportSvg">SVG</button><button type="button" class="info" data-info="svg" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></div>
+          <div class="menu-row"><button data-tip="pdf" data-export="pdf" data-i18n="exportPdf">PDF (searchable text)</button></div>
+          <div class="menu-row"><button data-tip="pptx" data-export="pptx" data-i18n="exportPptx">PowerPoint / Canva (.pptx, editable text)</button></div>
+          <div class="menu-row"><button data-tip="psd" data-export="psd" data-i18n="exportPsd">Photoshop PSD (editable text layers)</button></div>
+          <div class="menu-row"><button data-tip="svg" data-export="svg" data-i18n="exportSvg">SVG</button></div>
           <hr>
-          <div class="menu-row"><button data-export="json" data-i18n="exportJson">Template file (.json)</button><button type="button" class="info" data-info="json" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></div>
+          <div class="menu-row"><button data-tip="json" data-export="json" data-i18n="exportJson">Template file (.json)</button></div>
         </div>
-      </details><button type="button" class="info" data-info="export" data-i18n-aria-label="moreInfo" aria-label="More information">i</button>
+      </details>
       </span>
       <span id="account" class="account" hidden>
         <button id="signInBtn" class="btn" data-i18n="signInForCloud">Sign in for cloud</button>
         <span id="userBox" hidden><span id="userEmail" class="muted"></span> <button id="signOutBtn" class="btn link" data-i18n="signOut">Sign out</button></span>
       </span>
-      <select id="langSelect" class="lang-select" data-i18n-aria-label="language" aria-label="Language"></select>
     </div>
   </header>
 
@@ -77,71 +91,70 @@
     <aside class="panel">
       <section>
         <h2 data-i18n="detectHeading">Detect text</h2>
-        <label class="field"><span class="label-row"><span data-i18n="layout">Layout</span><button type="button" class="info" data-info="layout" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></span>
+        <label data-tip="layout" class="field"><span class="label-row"><span data-i18n="layout">Layout</span></span>
           <select id="ocrMode"></select>
         </label>
-        <label class="check"><input id="eraseText" type="checkbox" checked> <span data-i18n="eraseOriginal">Remove original text from the photo</span><button type="button" class="info" data-info="eraseOriginal" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></label>
-        <label class="check"><input id="autoDetect" type="checkbox" checked> <span data-i18n="autoDetect">Detect automatically on new photos</span><button type="button" class="info" data-info="autoDetect" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></label>
-        <label class="field"><span class="label-row"><span data-i18n="minConfidence">Skip results below confidence</span><button type="button" class="info" data-info="minConfidence" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></span>
+        <label data-tip="eraseOriginal" class="check"><input id="eraseText" type="checkbox" checked> <span data-i18n="eraseOriginal">Remove original text from the photo</span></label>
+        <label data-tip="autoDetect" class="check"><input id="autoDetect" type="checkbox" checked> <span data-i18n="autoDetect">Detect automatically on new photos</span></label>
+        <label data-tip="minConfidence" class="field"><span class="label-row"><span data-i18n="minConfidence">Skip results below confidence</span></span>
           <input id="minConf" type="range" min="0" max="90" step="5" value="30" oninput="this.nextElementSibling.textContent=this.value+'%'"><output>30%</output>
         </label>
-        <div class="with-info wide"><button id="detectBtn" class="btn wide" data-i18n="detectAgain">Detect text again</button><button type="button" class="info" data-info="detectAgain" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></div>
+        <div class="with-info wide"><button data-tip="detectAgain" id="detectBtn" class="btn wide" data-i18n="detectAgain">Detect text again</button></div>
       </section>
 
       <section>
         <h2 data-i18n="tools">Tools</h2>
         <div class="row">
-          <span class="with-info"><button id="addTextBtn" class="btn" data-needs-doc data-i18n="addText">＋ Text</button><button type="button" class="info" data-info="addText" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></span>
-          <button id="eraseBtn" class="btn" data-needs-doc data-i18n="eraseArea" data-i18n-title="eraseAreaTitle" title="Drag a box over leftover text to paint it out">Erase area</button><button type="button" class="info" data-info="eraseArea" data-i18n-aria-label="moreInfo" aria-label="More information">i</button>
-          <button id="undoEraseBtn" class="btn" data-i18n="undoErase" data-i18n-title="undoEraseTitle" title="Undo last erase">↶ Erase</button><button type="button" class="info" data-info="undoErase" data-i18n-aria-label="moreInfo" aria-label="More information">i</button>
+          <span class="with-info"><button data-tip="addText" id="addTextBtn" class="btn" data-needs-doc data-i18n="addText">＋ Text</button></span>
+          <button data-tip="eraseArea" id="eraseBtn" class="btn" data-needs-doc data-i18n="eraseArea">Erase area</button>
+          <button data-tip="undoErase" id="undoEraseBtn" class="btn" data-i18n="undoErase">↶ Erase</button>
         </div>
         <div class="row">
           <button id="undoBtn" class="btn" data-needs-doc data-i18n="undo" data-i18n-title="undoTitle" title="Undo (Ctrl+Z)">↶ Undo</button>
-          <button id="redoBtn" class="btn" data-needs-doc data-i18n="redo" data-i18n-title="redoTitle" title="Redo (Ctrl+Shift+Z)">↷ Redo</button><button type="button" class="info" data-info="undoRedo" data-i18n-aria-label="moreInfo" aria-label="More information">i</button>
-          <label class="field inline"><span data-i18n="zoom">Zoom</span>
-            <select id="zoom" data-needs-doc><option value="fit" data-i18n="zoomFit">Fit</option><option value="0.5">50%</option><option value="1">100%</option><option value="2">200%</option></select><button type="button" class="info" data-info="zoom" data-i18n-aria-label="moreInfo" aria-label="More information">i</button>
+          <button data-tip="undoRedo" id="redoBtn" class="btn" data-needs-doc data-i18n="redo">↷ Redo</button>
+          <label data-tip="zoom" class="field inline"><span data-i18n="zoom">Zoom</span>
+            <select id="zoom" data-needs-doc><option value="fit" data-i18n="zoomFit">Fit</option><option value="0.5">50%</option><option value="1">100%</option><option value="2">200%</option></select>
           </label>
         </div>
-        <label class="check"><input id="showOriginal" type="checkbox"> <span data-i18n="showOriginal">Show original photo</span><button type="button" class="info" data-info="showOriginal" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></label>
+        <label data-tip="showOriginal" class="check"><input id="showOriginal" type="checkbox"> <span data-i18n="showOriginal">Show original photo</span></label>
       </section>
 
       <section>
         <h2 data-i18n="selectedText">Selected text</h2>
         <p id="noSelection" class="muted" data-i18n="noSelection">Click a text box to edit it. Double-click to type on the canvas.</p>
         <div id="props" hidden>
-          <label class="field"><span class="label-row"><span data-i18n="text">Text</span><button type="button" class="info" data-info="text" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></span>
+          <label data-tip="text" class="field"><span class="label-row"><span data-i18n="text">Text</span></span>
             <textarea id="propText" rows="3" lang="zh-Hant-TW"></textarea>
           </label>
           <div class="row">
-            <label class="field grow"><span class="label-row"><span data-i18n="font">Font</span><button type="button" class="info" data-info="font" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></span>
+            <label data-tip="font" class="field grow"><span class="label-row"><span data-i18n="font">Font</span></span>
               <select id="propFont"></select>
             </label>
             <label class="check"><input id="propBold" type="checkbox"> <span data-i18n="bold">Bold</span></label>
           </div>
           <div class="row">
-            <label class="field"><span class="label-row"><span data-i18n="size">Size</span><button type="button" class="info" data-info="size" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></span> <input id="propSize" type="number" min="4" max="2000" step="1"></label>
-            <label class="field"><span class="label-row"><span data-i18n="colour">Colour</span><button type="button" class="info" data-info="colour" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></span> <input id="propColor" type="color"></label>
-            <label class="field"><span class="label-row"><span data-i18n="lineHeight">Line height</span><button type="button" class="info" data-info="lineHeight" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></span> <input id="propLine" type="number" min="0.5" max="3" step="0.05"></label>
+            <label data-tip="size" class="field"><span class="label-row"><span data-i18n="size">Size</span></span> <input id="propSize" type="number" min="4" max="2000" step="1"></label>
+            <label data-tip="colour" class="field"><span class="label-row"><span data-i18n="colour">Colour</span></span> <input id="propColor" type="color"></label>
+            <label data-tip="lineHeight" class="field"><span class="label-row"><span data-i18n="lineHeight">Line height</span></span> <input id="propLine" type="number" min="0.5" max="3" step="0.05"></label>
           </div>
-          <div class="row segmented" role="radiogroup" data-i18n-aria-label="alignment" aria-label="Alignment">
+          <div data-tip="alignment" class="row segmented" role="radiogroup" data-i18n-aria-label="alignment" aria-label="Alignment">
             <label><input type="radio" name="align" value="left"><span data-i18n="alignLeft">Left</span></label>
             <label><input type="radio" name="align" value="center"><span data-i18n="alignCentre">Centre</span></label>
             <label><input type="radio" name="align" value="right"><span data-i18n="alignRight">Right</span></label>
           </div>
-          <button type="button" class="info" data-info="alignment" data-i18n-aria-label="moreInfo" aria-label="More information">i</button>
-          <label class="check"><input id="propVertical" type="checkbox"> <span data-i18n="vertical">Vertical text (直排)</span><button type="button" class="info" data-info="vertical" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></label>
-          <label class="field"><span class="label-row"><span data-i18n="opacity">Opacity</span><button type="button" class="info" data-info="opacity" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></span> <input id="propOpacity" type="range" min="0" max="1" step="0.05"></label>
+          <label data-tip="vertical" class="check"><input id="propVertical" type="checkbox"> <span data-i18n="vertical">Vertical text (直排)</span></label>
+          <label data-tip="opacity" class="field"><span class="label-row"><span data-i18n="opacity">Opacity</span></span> <input id="propOpacity" type="range" min="0" max="1" step="0.05"></label>
           <div class="row">
             <button id="dupBtn" class="btn" data-i18n="duplicate">Duplicate</button>
             <button id="fwdBtn" class="btn" data-i18n-title="bringForward" title="Bring forward">↑</button>
             <button id="backBtn" class="btn" data-i18n-title="sendBackward" title="Send backward">↓</button>
-            <button id="delBtn" class="btn danger" data-i18n="delete">Delete</button><button type="button" class="info" data-info="arrange" data-i18n-aria-label="moreInfo" aria-label="More information">i</button>
+            <button data-tip="arrange" id="delBtn" class="btn danger" data-i18n="delete">Delete</button>
           </div>
         </div>
       </section>
 
       <section>
-        <h2><span data-i18n="textLayers">Text layers</span> <span id="layerCount" class="badge">0</span><button type="button" class="info" data-info="layers" data-i18n-aria-label="moreInfo" aria-label="More information">i</button></h2>
+        <h2 data-tip="layers"><span data-i18n="textLayers">Text layers</span> <span id="layerCount" class="badge">0</span></h2>
         <ul id="layers" class="layers"></ul>
       </section>
     </aside>
@@ -171,5 +184,22 @@
 
   <div id="toast" class="toast" role="status" hidden></div>
   <div id="infoPop" class="info-pop" role="tooltip" hidden></div>
+  <script>
+    // If the app didn't start (old browser, blocked or half-cached files), say so
+    // instead of leaving a page that looks normal but does nothing.
+    window.addEventListener('error', function (e) { window.templateMakerError = e.message; });
+    window.addEventListener('load', function () {
+      setTimeout(function () {
+        if (window.templateMakerReady) return;
+        var box = document.createElement('div');
+        box.className = 'start-error';
+        box.setAttribute('role', 'alert');
+        box.textContent = 'The app couldn\u2019t start in this browser. Reload the page (hold Shift and click Reload), or update your browser.\n'
+          + '程式無法在此瀏覽器啟動。請重新整理頁面（按住 Shift 再按重新載入），或更新瀏覽器。'
+          + (window.templateMakerError ? '\n\n' + window.templateMakerError : '');
+        document.body.insertBefore(box, document.body.firstChild);
+      }, 1500);
+    });
+  </script>
 </body>
 </html>

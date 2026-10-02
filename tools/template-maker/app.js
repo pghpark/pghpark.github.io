@@ -681,22 +681,27 @@ function renderOptions() {
   if (font) $('#propFont').value = font;
 }
 
-/** (i) buttons: one shared bubble with the explanation, placed next to the button. */
-function initInfo() {
+/**
+ * Help tooltips: hover a control (desktop), focus it with the keyboard, or
+ * press and hold it (touch) to see what it does, in the current language.
+ */
+function initTips() {
   const pop = $('#infoPop');
-  let openBtn = null;
+  let timer = null;
+  let current = null;
+  let suppressClick = false;
   const hide = () => {
+    clearTimeout(timer);
     pop.hidden = true;
-    openBtn?.setAttribute('aria-expanded', 'false');
-    openBtn = null;
+    current?.removeAttribute('aria-describedby');
+    current = null;
   };
-  const show = (btn) => {
-    hide();
-    openBtn = btn;
-    btn.setAttribute('aria-expanded', 'true');
-    pop.textContent = t(`info:${btn.dataset.info}`);
+  const show = (el) => {
+    current = el;
+    pop.textContent = t(`info:${el.dataset.tip}`);
     pop.hidden = false;
-    const r = btn.getBoundingClientRect();
+    el.setAttribute('aria-describedby', 'infoPop');
+    const r = el.getBoundingClientRect();
     const w = pop.offsetWidth;
     const h = pop.offsetHeight;
     const left = Math.min(Math.max(16, r.left + r.width / 2 - w / 2), window.innerWidth - w - 16);
@@ -704,18 +709,42 @@ function initInfo() {
     pop.style.left = `${left}px`;
     pop.style.top = `${below ? r.bottom + 8 : Math.max(8, r.top - h - 8)}px`;
   };
-  document.querySelectorAll('.info').forEach((b) => b.setAttribute('aria-expanded', 'false'));
-  // Capture phase, so a click on (i) inside a <label> or <summary> never toggles that control.
-  document.addEventListener('click', (e) => {
-    const btn = e.target.closest('.info');
-    if (btn) {
-      e.preventDefault();
-      e.stopPropagation();
-      if (openBtn === btn) hide(); else show(btn);
-    } else if (!e.target.closest('#infoPop')) {
-      hide();
+  const later = (el, ms) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => show(el), ms);
+  };
+  // Mouse: show after a short pause over a control, hide when leaving it.
+  document.addEventListener('pointerover', (e) => {
+    if (e.pointerType !== 'mouse') return;
+    const el = e.target.closest('[data-tip]');
+    if (el === current) return;
+    hide();
+    if (el) { current = el; later(el, 450); }
+  });
+  document.addEventListener('mouseout', (e) => { if (!e.relatedTarget) hide(); });
+  // Keyboard: show while a control is focused.
+  document.addEventListener('focusin', (e) => {
+    const el = e.target.closest('[data-tip]');
+    if (el && e.target.matches(':focus-visible')) { hide(); current = el; later(el, 300); }
+  });
+  document.addEventListener('focusout', hide);
+  // Touch: press and hold. The tap that ends a long press doesn't also click.
+  document.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse') return;
+    const el = e.target.closest('[data-tip]');
+    hide();
+    if (el) {
+      current = el;
+      timer = setTimeout(() => { show(el); suppressClick = true; }, 550);
     }
+  });
+  const cancelPress = () => { if (pop.hidden) clearTimeout(timer); };
+  document.addEventListener('pointerup', cancelPress);
+  document.addEventListener('pointercancel', cancelPress);
+  document.addEventListener('click', (e) => {
+    if (suppressClick) { suppressClick = false; e.preventDefault(); e.stopPropagation(); }
   }, true);
+  document.addEventListener('contextmenu', (e) => { if (e.target.closest('[data-tip]') && !pop.hidden) e.preventDefault(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hide(); });
   window.addEventListener('resize', hide);
   document.addEventListener('scroll', hide, true);
@@ -723,14 +752,14 @@ function initInfo() {
 }
 
 function initLanguage() {
-  const sel = $('#langSelect');
-  sel.replaceChildren(...Object.entries(LANGS).map(([k, v]) => new Option(v.label, k)));
-  sel.value = getLang();
-  sel.addEventListener('change', () => setLang(sel.value));
+  const buttons = [...document.querySelectorAll('#langToggle [data-lang]')];
+  const sync = () => buttons.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.lang === getLang())));
+  buttons.forEach((b) => b.addEventListener('click', () => setLang(b.dataset.lang)));
   applyI18n();
   renderOptions();
+  sync();
   document.addEventListener('langchange', () => {
-    sel.value = getLang();
+    sync();
     renderOptions();
     renderLayers();
     renderProps();
@@ -778,7 +807,7 @@ async function initCloud() {
 
 function init() {
   initLanguage();
-  initInfo();
+  initTips();
   updateSaveTitle();
   updateTitle();
 
@@ -846,6 +875,7 @@ function init() {
   renderLayers();
   renderProps();
   initCloud();
+  window.templateMakerReady = true;
 }
 
 init();

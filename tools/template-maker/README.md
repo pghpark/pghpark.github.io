@@ -12,9 +12,9 @@ there is no server to maintain.
 
 ## Languages
 
-The interface is in **English (UK)** or **繁體中文**. Use the language menu at the top right. The app remembers your choice in that browser. On a first visit it picks Chinese for Chinese-language browsers and English otherwise.
+The interface is in **English (UK)** or **繁體中文**. Use the **EN | 繁中** toggle next to the app name. The app remembers your choice in that browser. On a first visit it picks Chinese for Chinese-language browsers and English otherwise.
 
-Every setting and export format has an **(i)** button that explains what it does, in either language.
+Hover over any setting, tool or export format (or press and hold it on a phone) to see a tooltip explaining what it does, in either language.
 
 To send someone the app already in their language, add `?lang=` to the link:
 
@@ -137,6 +137,10 @@ Libraries load from jsDelivr with pinned versions: Fabric.js 7.4.0, Tesseract.js
 pdf-lib 1.17.1, @pdf-lib/fontkit 1.1.1, ag-psd 31.0.2, PptxGenJS 4.0.1, harfbuzzjs 1.6.2 and
 supabase-js 2.117.2. Check `export.js → textGeometry()` before upgrading Fabric, because it
 mirrors Fabric 7's text-baseline maths so the PDF and PSD line up with the canvas.
+
+## Releasing changes
+
+Bump the version string in `index.html` (it appears in the import map, `app.js?v=` and `style.css?v=`) whenever you change any file. GitHub Pages lets browsers cache each file for 10 minutes, and the version stamp stops a browser from mixing old and new files. If the app ever fails to start, it shows a message with the error instead of a page that silently does nothing.
 
 ## Run locally
 

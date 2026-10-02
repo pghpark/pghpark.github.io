@@ -68,15 +68,6 @@ body {
 .doc-name:hover, .doc-name:focus { border-color: var(--line); outline: none; }
 .actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-left: auto; }
 .account { display: inline-flex; align-items: center; gap: 6px; }
-.lang-select {
-  padding: 6px 8px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--panel);
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-}
 
 /* Buttons & fields */
 .btn {
@@ -331,29 +322,14 @@ dialog form, dialog > p { padding: 12px 16px; margin: 0; }
   stroke-linejoin: round;
 }
 .btn .caret { font-size: 11px; opacity: 0.8; }
-.topbar .lang-select { min-height: 42px; font-size: 15px; }
-
-/* (i) explanation buttons */
-.with-info { display: inline-flex; align-items: center; gap: 4px; }
+.topbar 
+/* Help tooltips (data-tip) */
+.with-info { display: inline-flex; align-items: center; }
 .with-info.wide { display: flex; width: 100%; }
 .with-info.wide .btn { flex: 1; }
 .label-row { display: inline-flex; align-items: center; gap: 4px; }
-.info {
-  display: inline-grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  flex-shrink: 0;
-  padding: 0;
-  border: 1.5px solid var(--muted);
-  border-radius: 50%;
-  background: none;
-  color: var(--muted);
-  font: italic 700 12px/1 Georgia, "Times New Roman", serif;
-  cursor: pointer;
-}
-.info:hover, .info[aria-expanded=true] { border-color: var(--accent); color: var(--accent); }
-.info:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+h2[data-tip], .field[data-tip] > span:first-child, .check[data-tip] > span, .menu-option[data-tip] .label-row { cursor: help; }
+[data-tip] { -webkit-touch-callout: none; }
 .info-pop {
   position: fixed;
   z-index: 60;
@@ -367,9 +343,44 @@ dialog form, dialog > p { padding: 12px 16px; margin: 0; }
   font-size: 13px;
   line-height: 1.55;
   white-space: pre-line;
+  pointer-events: none;
 }
 .menu-row { display: flex; align-items: center; gap: 4px; padding-right: 6px; }
 .menu-row > button[data-export] { flex: 1; }
 .menu-body { min-width: 320px; }
 .menu-row > button[data-export] { white-space: nowrap; }
 .menu-option .label-row { flex: 1; }
+
+/* Language toggle (EN | 繁中) */
+.lang-toggle {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.lang-toggle button {
+  min-width: 44px;
+  min-height: 32px;
+  padding: 4px 12px;
+  border: 0;
+  background: var(--panel);
+  color: var(--muted);
+  font: 600 13px/1 inherit;
+  font-family: inherit;
+  cursor: pointer;
+}
+.lang-toggle button + button { border-left: 1px solid var(--line); }
+.lang-toggle button[aria-pressed=true] { background: var(--accent); color: var(--accent-text); }
+.lang-toggle button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* Shown only if the app fails to start (see index.html) */
+.start-error {
+  margin: 16px;
+  padding: 12px 16px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  white-space: pre-line;
+}
