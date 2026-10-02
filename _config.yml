@@ -19,3 +19,8 @@ github_username:  jekyll
 
 # Build settings
 markdown: kramdown
+# Docs for the template maker, not site pages (GitHub Pages would otherwise
+# turn the README into a page and add it to the header nav).
+exclude:
+  - tools/template-maker/README.md
+  - tools/template-maker/supabase-schema.sql
