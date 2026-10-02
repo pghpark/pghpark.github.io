@@ -5,7 +5,25 @@ import { t } from './i18n.js';
 
 export const isText = (o) => o && typeof o.text === 'string' && o.visible !== false;
 
-export function download(blob, filename) {
+/**
+ * Hand a finished file to the user. On phones this opens the system share
+ * sheet straight away (Save Image, Save to Files, AirDrop…), which is how a
+ * phone saves files; a plain download link only opens a preview page there.
+ * Safari allows the sheet only within a few seconds of the tap, so after a
+ * slow export it asks for one more tap. Computers download as usual.
+ */
+export async function download(blob, filename) {
+  const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' });
+  const phone = matchMedia('(pointer: coarse)').matches;
+  if (phone && navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file] });
+      return;
+    } catch (e) {
+      if (e.name === 'AbortError') return; // the sheet was closed
+      if (e.name === 'NotAllowedError' && await askToShare(file)) return; // too long since the tap
+    }
+  }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = filename;
@@ -13,6 +31,22 @@ export function download(blob, filename) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+
+/** "Your file is ready — Save or share": the tap opens the share sheet. */
+function askToShare(file) {
+  const dlg = document.querySelector('#shareDialog');
+  if (!dlg) return Promise.resolve(false);
+  document.querySelector('#shareName').textContent = file.name;
+  dlg.showModal();
+  return new Promise((resolve) => {
+    document.querySelector('#shareYes').onclick = async () => {
+      dlg.close();
+      try { await navigator.share({ files: [file] }); } catch { /* closed */ }
+      resolve(true);
+    };
+    document.querySelector('#shareNo').onclick = () => { dlg.close(); resolve(true); };
+  });
 }
 
 export function safeFilename(name) {

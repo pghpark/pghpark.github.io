@@ -1341,19 +1341,19 @@ async function doExport(kind) {
   const scale = Number($('#exportScale').value) || 1;
   await withBusy(t('exporting', { kind: kind.toUpperCase() }), async () => {
     if (['png', 'jpeg', 'webp'].includes(kind)) {
-      download(await exportRaster(canvas, kind, 0.92, scale), `${base}.${kind === 'jpeg' ? 'jpg' : kind}`);
+      await download(await exportRaster(canvas, kind, 0.92, scale), `${base}.${kind === 'jpeg' ? 'jpg' : kind}`);
     } else if (kind === 'pptx') {
-      download(await exportPPTX(canvas, state.clean, state.name), `${base}.pptx`);
+      await download(await exportPPTX(canvas, state.clean, state.name), `${base}.pptx`);
       toast(t('pptxSaved'), 'ok', 8000);
     } else if (kind === 'svg') {
-      download(await exportSVG(canvas), `${base}.svg`);
+      await download(await exportSVG(canvas), `${base}.svg`);
     } else if (kind === 'pdf') {
-      download(await exportPDF(canvas, state.clean, state.name, (msg) => setBusy(msg)), `${base}.pdf`);
+      await download(await exportPDF(canvas, state.clean, state.name, (msg) => setBusy(msg)), `${base}.pdf`);
     } else if (kind === 'psd') {
-      download(await exportPSD(canvas, state.clean, state.original), `${base}.psd`);
+      await download(await exportPSD(canvas, state.clean, state.original), `${base}.psd`);
       toast(t('psdSaved'), 'ok', 7000);
     } else if (kind === 'json') {
-      download(await recordToFile(await buildRecord({ full: true })), `${base}.template.json`);
+      await download(await recordToFile(await buildRecord({ full: true })), `${base}.template.json`);
     }
   });
   canvas.requestRenderAll();

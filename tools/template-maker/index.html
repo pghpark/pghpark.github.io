@@ -17,7 +17,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" crossorigin="anonymous" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&family=Noto+Serif+TC:wght@400;700&family=Huninn&family=Iansui&display=swap">
-  <link rel="stylesheet" href="style.css?v=2026-10-02.16">
+  <link rel="stylesheet" href="style.css?v=2026-10-02.17">
   <!-- Versions are pinned; see README.md before upgrading (Fabric 7 changed text positioning). -->
   <script crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/fabric@7.4.0/dist/index.min.js"></script>
   <script crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js"></script>
@@ -29,18 +29,18 @@
        (GitHub Pages lets browsers cache each file for 10 minutes). -->
   <script type="importmap">
     {"imports": {
-      "./app.js": "./app.js?v=2026-10-02.16",
-      "./i18n.js": "./i18n.js?v=2026-10-02.16",
-      "./ocr.js": "./ocr.js?v=2026-10-02.16",
-      "./imaging.js": "./imaging.js?v=2026-10-02.16",
-      "./fonts.js": "./fonts.js?v=2026-10-02.16",
-      "./export.js": "./export.js?v=2026-10-02.16",
-      "./storage.js": "./storage.js?v=2026-10-02.16",
-      "./config.js": "./config.js?v=2026-10-02.16",
-      "./paddle.js": "./paddle.js?v=2026-10-02.16"
+      "./app.js": "./app.js?v=2026-10-02.17",
+      "./i18n.js": "./i18n.js?v=2026-10-02.17",
+      "./ocr.js": "./ocr.js?v=2026-10-02.17",
+      "./imaging.js": "./imaging.js?v=2026-10-02.17",
+      "./fonts.js": "./fonts.js?v=2026-10-02.17",
+      "./export.js": "./export.js?v=2026-10-02.17",
+      "./storage.js": "./storage.js?v=2026-10-02.17",
+      "./config.js": "./config.js?v=2026-10-02.17",
+      "./paddle.js": "./paddle.js?v=2026-10-02.17"
     }}
   </script>
-  <script type="module" src="app.js?v=2026-10-02.16"></script>
+  <script type="module" src="app.js?v=2026-10-02.17"></script>
 </head>
 <body>
   <header class="topbar">
@@ -179,6 +179,14 @@
     </footer>
   </dialog>
 
+  <dialog id="shareDialog" class="art-dialog">
+    <header><h2 data-i18n="shareTitle">Your file is ready</h2></header>
+    <div class="art-body"><p id="shareName" lang="zh-Hant-TW"></p></div>
+    <footer>
+      <button type="button" id="shareNo" class="btn" data-i18n="shareLater">Not now</button>
+      <button type="button" id="shareYes" class="btn primary" data-i18n="shareSave">Save or share</button>
+    </footer>
+  </dialog>
   <dialog id="artDialog" class="art-dialog">
     <header><h2 data-i18n="artTitle">Text inside pictures</h2></header>
     <div class="art-body">
