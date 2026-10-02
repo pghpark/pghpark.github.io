@@ -22,6 +22,54 @@ const DET = { limitSide: 960, maxSide: 2400, fineSide: 1920, wholeArea: 1.4e6, t
 const REC_HEIGHT = 48;
 
 const ORT_JS = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ort.min.js';
+// The runtime's engine (28 MB), the biggest first-time download. Fetched here
+// with the models so the progress and countdown cover it.
+const ORT_WASM_FILE = `${ORT_WASM}ort-wasm-simd-threaded.jsep.wasm`;
+// File sizes, for the countdown when a server doesn't send a length.
+const KNOWN_SIZE = { [MODELS[0].det]: 9880512, [MODELS[0].rec]: 21159378, [ORT_WASM_FILE]: 28312028 };
+
+/**
+ * A downloader that adds up all files in flight and reports one progress:
+ * {status: 'downloading', loaded, total, progress, eta} (eta in seconds, from
+ * the average speed so far; null until a second has passed).
+ */
+function downloader(report) {
+  const files = new Map();
+  const t0 = performance.now();
+  let last = 0;
+  const update = (force) => {
+    const now = performance.now();
+    if (!force && now - last < 250) return;
+    last = now;
+    let loaded = 0; let total = 0;
+    for (const f of files.values()) { loaded += f.got; total += Math.max(f.total, f.got); }
+    const secs = (now - t0) / 1000;
+    const rate = secs >= 1 ? loaded / secs : 0;
+    report?.({ status: 'downloading', loaded, total, progress: total ? loaded / total : null, eta: rate > 0 ? (total - loaded) / rate : null });
+  };
+  return async (url) => {
+    const f = { got: 0, total: KNOWN_SIZE[url] || 0 }; // counts towards the total from the start
+    files.set(url, f);
+    const res = await fetch(url).catch((e) => { files.delete(url); throw e; });
+    if (!res.ok) { files.delete(url); throw new Error(`Model download failed (${res.status})`); }
+    f.total = Number(res.headers.get('content-length')) || f.total;
+    const reader = res.body.getReader();
+    const chunks = [];
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      f.got += value.length;
+      update(false);
+    }
+    f.total = f.got;
+    update(true);
+    const out = new Uint8Array(f.got);
+    let o = 0;
+    for (const c of chunks) { out.set(c, o); o += c.length; }
+    return out;
+  };
+}
 const OPENCC_JS = 'https://cdn.jsdelivr.net/npm/opencc-js@1.4.2/dist/umd/cn2t.js';
 
 function loadScript(src) {
@@ -40,35 +88,20 @@ async function load(report) {
     if (!self.ort) await loadScript(ORT_JS);
     ort.env.wasm.wasmPaths = ORT_WASM;
     ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 1) : 1;
-    const fetchBytes = async (path, label) => {
-      report?.({ status: label, progress: 0 });
-      const res = await fetch(path);
-      if (!res.ok) throw new Error(`Model download failed (${res.status})`);
-      const total = Number(res.headers.get('content-length')) || 0;
-      const reader = res.body.getReader();
-      const chunks = [];
-      let got = 0;
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        got += value.length;
-        if (total) report?.({ status: label, progress: got / total });
-      }
-      const out = new Uint8Array(got);
-      let o = 0;
-      for (const c of chunks) { out.set(c, o); o += c.length; }
-      return out;
-    };
+    const fetchBytes = downloader(report);
+    // If this fails, the runtime fetches its engine itself (just without progress).
+    const wasm = fetchBytes(ORT_WASM_FILE).catch(() => null);
     const opts = { executionProviders: ['wasm'], graphOptimizationLevel: 'all' };
     let det; let rec; let entries; let lastError;
     for (const model of MODELS) {
       try {
         const [detBytes, recBytes, dictText] = await Promise.all([
-          fetchBytes(model.det, 'loading text finder'),
-          fetchBytes(model.rec, 'loading text reader'),
+          fetchBytes(model.det),
+          fetchBytes(model.rec),
           fetch(model.dict).then((r) => { if (!r.ok) throw new Error(`Model download failed (${r.status})`); return r.text(); }),
         ]);
+        const engine = await wasm;
+        if (engine) ort.env.wasm.wasmBinary = engine;
         [det, rec] = await Promise.all([ort.InferenceSession.create(detBytes, opts), ort.InferenceSession.create(recBytes, opts)]);
         // CTC: index 0 is "blank", then the dictionary, then a space. A .json
         // dictionary is {"characters": [...]}; a .txt one has one character per

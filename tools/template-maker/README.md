@@ -81,7 +81,7 @@ detection, use a sharp, well-lit photo taken straight on, with printed (not hand
 - **Sizing:** each new line is fitted to the original letters' pixel bounds (not the OCR box); vertical columns are measured column by column. Letter height sets the font size, letter spacing absorbs width differences, and bold or regular is chosen by comparing stroke coverage. Text colour is the colour found inside the line that stops at its ends (background and artwork carry on past them), taken from the stroke centres; on the benchmark this raised colour accuracy from 61% to 72% with exact boxes, most for small text on artwork. Overlapping display lettering is shrunk just enough not to collide.
 - **Font:** the original letters are compared, shape against shape, with the same text drawn in each library font (Noto Sans TC, Noto Serif TC, Huninn 粉圓, Iansui 芫荽, all Taiwan standard forms), and the closest wins.
 - **Fallback:** if PaddleOCR can't load (very old browsers), Tesseract.js is used instead.
-- **Download size:** about 45 MB on first use (ONNX Runtime ~14 MB, models ~31 MB), then cached by the browser.
+- **Download size:** about 60 MB on first use (ONNX Runtime's engine 28 MB, models 31 MB, plus small scripts), then served from the browser's cache. While it downloads, the app shows megabytes done and an estimate of the time left.
 
 ## OCR accuracy
 

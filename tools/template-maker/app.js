@@ -767,6 +767,18 @@ function askAboutPictureText(lines) {
   });
 }
 
+/** "Downloading the text reader, first time only: 12 of 60 MB · about 40 s left". */
+function downloadLabel({ loaded, total, eta }) {
+  const mb = (n) => (n / 1e6).toFixed(0);
+  let left = t('ocr:downloadingEstimating');
+  if (eta != null && Number.isFinite(eta)) {
+    const secs = Math.max(1, Math.round(eta));
+    const time = secs < 60 ? t('secondsShort', { s: secs }) : t('minutesShort', { m: Math.floor(secs / 60), s: secs % 60 });
+    left = t('ocr:downloadingLeft', { left: time });
+  }
+  return `${t('ocr:downloading', { done: mb(loaded), total: total ? mb(total) : '…' })} · ${left}`;
+}
+
 async function runDetect() {
   if (!state.original) return;
   const existing = canvas.getObjects().filter((o) => o.ocr);
@@ -774,7 +786,7 @@ async function runDetect() {
   let pictureLines = [];
   await withBusy(t('detecting'), async () => {
     let lines = await detectText(state.original, {
-      onProgress: (m) => setBusy(`${t(`ocr:${m.status}`).replace(/^ocr:/, '')}…`, typeof m.progress === 'number' ? m.progress : null),
+      onProgress: (m) => setBusy(m.status === 'downloading' ? downloadLabel(m) : `${t(`ocr:${m.status}`).replace(/^ocr:/, '')}…`, typeof m.progress === 'number' ? m.progress : null),
     });
     history.paused = true;
     canvas.discardActiveObject();

@@ -208,7 +208,16 @@ body {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
   z-index: 10;
 }
-.busy progress { width: 140px; }
+.busy progress { width: 140px; flex-shrink: 0; }
+/* Phones: a full-width bar under the photo's top edge, clear of the compare button. */
+@media (max-width: 760px) {
+  .busy {
+    left: 12px; right: 12px; top: 64px; transform: none;
+    flex-direction: column; align-items: stretch; gap: 8px;
+    border-radius: 12px; padding: 10px 14px; font-size: 14px;
+  }
+  .busy progress { width: 100%; }
+}
 
 .panel {
   width: 320px;
