@@ -473,16 +473,18 @@ export function textColorByContrast(canvas, box, vertical = false) {
     }
     return n ? edge / n : 0;
   };
-  let pick = null; let pickScore = 0; let fallback = null; let fallbackScore = 0;
-  for (const c of centres) {
-    const sIn = inside.filter((p) => dist(p, c) < T).length / inside.length;
-    const sOut = ends.filter((p) => dist(p, c) < T).length / ends.length;
-    if (sIn < 0.04 || sOut > 0.5 * sIn) continue;
-    const score = dist(c, around);
-    if (score > fallbackScore) { fallbackScore = score; fallback = c; }
-    if (edgeShare(c) >= Math.min(0.35, 6 / t) && score > pickScore) { pickScore = score; pick = c; } // thicker strokes in bigger text
-  }
-  pick ||= fallback;
+  // Candidates: common enough inside, and never the surroundings' own colour.
+  const cands = centres
+    .map((c) => ({ c, sIn: inside.filter((p) => dist(p, c) < T).length / inside.length, sOut: ends.filter((p) => dist(p, c) < T).length / ends.length, score: dist(c, around) }))
+    .filter((x) => x.sIn >= 0.04 && x.score >= 60);
+  const best = (list) => list.reduce((m, x) => (!m || x.score > m.score ? x : m), null);
+  const stops = cands.filter((x) => x.sOut <= 0.5 * x.sIn);
+  // Thicker strokes in bigger text, so a lower edge share is still a stroke.
+  const strokes = (list) => list.filter((x) => edgeShare(x.c) >= Math.min(0.35, 6 / t));
+  // Prefer a stroke colour that stops at the ends; then any colour that stops;
+  // then (an end lies on artwork of the text's colour, or off the photo) the
+  // most distinct stroke colour.
+  const pick = (best(strokes(stops)) || best(stops) || best(strokes(cands)))?.c;
   if (!pick) return estimateTextColor(canvas, box);
   // Refine: the stroke cores, i.e. the members of that cluster least like the
   // surroundings (edge pixels are blends).

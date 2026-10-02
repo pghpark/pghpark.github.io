@@ -216,6 +216,48 @@ function zoomAround(z, clientX, clientY) {
     zoomAround(currentZoom() * Math.exp(-e.deltaY * 0.01), e.clientX, e.clientY);
   }, { passive: false });
 })();
+
+// One finger on the photo's empty area moves the view, like scrolling a
+// picture (it used to draw a selection box). On a text box it still selects
+// and drags it; a short tap on the empty area still clears the selection.
+(() => {
+  const stage = $('#stage');
+  let pan = null;
+  const onText = (e) => {
+    const pt = canvas.getScenePoint(e);
+    const act = canvas.getActiveObject();
+    if (act) {
+      const r = act.getBoundingRect(); const pad = 24 / currentZoom(); // its handles too
+      if (pt.x >= r.left - pad && pt.x <= r.left + r.width + pad && pt.y >= r.top - pad && pt.y <= r.top + r.height + pad) return true;
+    }
+    return canvas.getObjects().some((o) => o.visible && o.evented !== false && o.containsPoint(pt));
+  };
+  window.addEventListener('pointerdown', (e) => {
+    if (e.pointerType !== 'touch' || state.tool !== 'select' || !hasDoc() || e.target !== canvas.upperCanvasEl || onText(e)) return;
+    pan = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: false };
+    e.stopPropagation();
+  }, true);
+  window.addEventListener('pointermove', (e) => {
+    if (!pan || e.pointerId !== pan.id) return;
+    e.stopPropagation();
+    const dx = e.clientX - pan.x; const dy = e.clientY - pan.y;
+    if (Math.abs(dx) + Math.abs(dy) > 6) pan.moved = true;
+    // Scroll the photo area first; whatever it can't take scrolls the page.
+    const sl = stage.scrollLeft; const st = stage.scrollTop;
+    stage.scrollLeft -= dx; stage.scrollTop -= dy;
+    window.scrollBy(-(dx + (stage.scrollLeft - sl)), -(dy + (stage.scrollTop - st)));
+    pan.x = e.clientX; pan.y = e.clientY;
+  }, true);
+  const end = (e) => {
+    if (!pan || e.pointerId !== pan.id) return;
+    e.stopPropagation();
+    if (!pan.moved) { canvas.discardActiveObject(); canvas.requestRenderAll(); }
+    pan = null;
+  };
+  window.addEventListener('pointerup', end, true);
+  window.addEventListener('pointercancel', end, true);
+  stage.addEventListener('touchstart', (e) => { if (e.touches.length > 1) pan = null; }, { capture: true }); // a pinch takes over
+})();
 new ResizeObserver(() => state.zoom === 'fit' && applyZoom()).observe($('#stage'));
 
 function resetCanvas(w, h) {
@@ -582,6 +624,49 @@ function refitIfAuto(o) {
 /** Turn OCR lines into fitted text boxes and erase their originals from the background. */
 const hexOf = (rgb) => `#${rgb.map((v) => v.toString(16).padStart(2, '0')).join('')}`;
 
+/**
+ * Two lines stacked one above the other (a date over its times) can each
+ * measure a little of the other: a few stray pixels from the line below are
+ * enough to carry a box down into it. Where two measured boxes overlap only
+ * a little, split them at the row of least ink in the overlap, which is the
+ * gap between the lines. Deep overlaps are lettering designed to overlap and
+ * are left alone.
+ */
+function splitStackedLines(lines) {
+  const flat = lines.filter((l) => !l.vertical && !l.badge);
+  const g = state.original.getContext('2d', { willReadFrequently: true });
+  const colours = new Map();
+  const colourOf = (l) => {
+    if (!colours.has(l)) colours.set(l, [1, 3, 5].map((k) => parseInt(textColorByContrast(l.src, l.bbox).slice(k, k + 2), 16)));
+    return colours.get(l);
+  };
+  for (const A of flat) {
+    for (const B of flat) {
+      if (A === B) continue;
+      const a = A.bbox; const b = B.bbox;
+      if ((a.y0 + a.y1) / 2 >= (b.y0 + b.y1) / 2) continue; // A must be the upper line
+      const x0 = Math.max(a.x0, b.x0); const x1 = Math.min(a.x1, b.x1);
+      if (x1 - x0 < 4 || a.y1 <= b.y0) continue;
+      const depth = a.y1 - b.y0;
+      if (depth > 0.6 * Math.min(a.y1 - a.y0, b.y1 - b.y0)) continue;
+      const ya = Math.max(Math.floor(b.y0), Math.ceil(a.y0) + 1); const yb = Math.min(Math.ceil(a.y1), Math.floor(b.y1) - 1);
+      if (yb < ya) continue;
+      const { data } = g.getImageData(Math.floor(x0), ya, Math.ceil(x1 - x0), yb - ya + 1);
+      const w = Math.ceil(x1 - x0);
+      const ca = colourOf(A); const cb = colourOf(B);
+      const near = (i, c) => Math.abs(data[i] - c[0]) + Math.abs(data[i + 1] - c[1]) + Math.abs(data[i + 2] - c[2]) < 80;
+      let best = ya; let bestN = Infinity;
+      for (let y = 0; y <= yb - ya; y++) {
+        let n = 0;
+        for (let x = 0; x < w; x++) { const i = (y * w + x) * 4; if (near(i, ca) || near(i, cb)) n++; }
+        if (n < bestN || (n === bestN && Math.abs(ya + y - (ya + yb) / 2) < Math.abs(best - (ya + yb) / 2))) { bestN = n; best = ya + y; }
+      }
+      A.bbox = { ...a, y1: Math.max(a.y0 + 2, best) };
+      B.bbox = { ...b, y0: Math.min(b.y1 - 2, best + 1) };
+    }
+  }
+}
+
 /** A copy of the photo with a date's badge disc painted in the background colour. */
 function withoutDisc(src, line) {
   const c = cloneCanvas(src);
@@ -602,8 +687,10 @@ async function convertLines(lines) {
     const src = l.disc ? withoutDisc(state.original, l) : state.original;
     const han = [...l.text].filter((ch) => /\p{Script=Han}/u.test(ch)).length;
     const bbox = inkBounds(src, l.bbox, { vertical: l.vertical, color: l.badge ? hexOf(l.badge.ink) : null, cjk: han >= 0.5 * [...l.text.replace(/\s/g, '')].length });
-    return { ...l, src, bbox, mask: l.vertical ? null : letterMask(src, bbox) };
+    return { ...l, src, bbox };
   });
+  splitStackedLines(fitted);
+  for (const l of fitted) l.mask = l.vertical ? null : letterMask(l.src, l.bbox);
   // Every candidate font needs these characters loaded before comparing shapes.
   const allText = fitted.map((l) => l.text).join('');
   await Promise.all(MATCH_FAMILIES.map(loadFontCss));
