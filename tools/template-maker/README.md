@@ -32,15 +32,27 @@ It installs like an app, without an app store:
 
 It then opens full screen from its icon (範本製作器). Templates saved in the browser are stored per app: on iPhone the Home Screen app keeps its own, separate from Safari's, so save a template again (or export it as .template.json and open it) to have it in both. Files: `manifest.webmanifest` and `icons/`.
 
+## Memory on phones
+
+iPhone Safari closes a tab that uses too much memory, and refuses new images once all of a tab's canvases together pass a limit (the error *The object is in an invalid state*). So the app:
+
+- keeps the photo at most 2400 px on its long side and draws the editor at 1× (not 3× screen density);
+- frees every temporary canvas as soon as it is used (canvases otherwise stay counted until Safari gets round to freeing them: about 450 MB for a 100-line poster before this was fixed), and frees the previous photo, removed text boxes and export copies straight away;
+- caps 2× / 3× image exports at 16.7 megapixels, Safari's largest canvas;
+- closes the text reader's worker after each photo (see *Offline* below).
+
+If the error still appears, the app says so in plain words (close other tabs, or reopen the app).
+
 ## Offline
 
 After the first use, the app works without a connection (`sw.js`, a service worker):
 
 - The app's own files are always checked with the server when online, so updates arrive the next time it opens; the stored copies are used offline.
-- The pinned libraries, the text reader (models and ONNX Runtime's engine, about 60 MB) and the fonts used are stored on first use and reused after that. The reader waits up to 5 s for the service worker before its first download, so that download is stored too.
+- The pinned libraries, the text reader (models and ONNX Runtime's engine, about 46 MB) and the fonts used are stored on first use and reused after that. The reader waits up to 5 s for the service worker before its first download, so that download is stored too.
+- When a library or model version is upgraded, the old version's stored files are deleted, so storage doesn't grow over time.
 - The app asks the browser to keep this storage (`navigator.storage.persist()`); a browser can still clear it when the phone runs out of space, and the app then downloads again.
 
-The text reader runs in a background worker (ONNX Runtime's proxy mode), so the page keeps responding while a photo is processed.
+The text reader runs in a background worker (`reader-worker.js`), so the page keeps responding while a photo is processed. The worker is closed after each photo: ONNX Runtime's working memory only grows while it runs, and closing it is the only way to give that (about 300 MB) back to the phone for editing and exporting.
 
 ## Photo formats
 
@@ -54,7 +66,7 @@ detection, use a sharp, well-lit photo taken straight on, with printed (not hand
 1. **Upload a photo** (the **Upload a photo** button, drag-and-drop, or paste). Large photos are scaled to 2400 px on the long side.
 2. **Find and read every piece of text** with [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) PP-OCRv6 Small (Apache-2.0), running in the browser through ONNX Runtime Web (see *How text is found* below).
 3. **Remove the original text** from the background. Only the letter strokes are repainted, from the pixels around them, so artwork behind or next to the text isn't smeared. Hold **Hold to see original** to compare with the untouched photo.
-4. **Edit.** Each line becomes a text box whose letters cover the original's: the same letter height, line width (through letter spacing), position, colour and bold/regular weight. Tap a box for the pop-up editor (text, size, colour, bold, vertical, keep as picture, delete), or use the side panel for everything else. The tools (＋ Text, Erase area, Undo, Redo, Zoom) sit in a bar right under the top buttons; on phones it stays at the top of the screen while you scroll. After you correct a misread, the line re-fits itself to the original area. Pinch or Ctrl + scroll to zoom; on a phone, drag the photo with one finger to move around it (a drag that starts on a text box moves the text).
+4. **Edit.** Each line becomes a text box whose letters cover the original's: the same letter height, line width (through letter spacing), position, colour and bold/regular weight. Tap a box for the pop-up editor (text, size, colour, bold, vertical, keep as picture, delete), or use the side panel for everything else. The most-used tools (＋ Text, Zoom, Undo, Redo) are large keys in a bar right under the top buttons; on phones it stays at the top of the screen while you scroll. **Erase area** and **↶ Erase** are in the side panel under *Clean up the photo* (on a phone, tapping Erase area scrolls back up to the photo). **Close template** (top bar) goes back to the start screen, first asking **Save / Don’t save / Cancel** if there are unsaved changes. After you correct a misread, the line re-fits itself to the original area. Pinch or Ctrl + scroll to zoom; on a phone, drag the photo with one finger to move around it (a drag that starts on a text box moves the text).
 5. **Save** to this browser (IndexedDB), or to the cloud once Supabase is set up (below).
 6. **Export:**
 
@@ -66,6 +78,8 @@ detection, use a sharp, well-lit photo taken straight on, with printed (not hand
 | PSD | Layers: hidden original photo, cleaned background, and one **live text layer** per text box (Noto Sans TC / Noto Serif TC, correct size, colour, position and rotation). Photoshop asks to *update text layers* when the file opens. Click **Update**. Install the fonts from [Google Fonts](https://fonts.google.com/noto/specimen/Noto+Sans+TC) first. |
 | SVG | Text stays as text and the fonts load from Google Fonts. |
 | Template file (.json) | Everything in one file (images inlined), for backup or moving between browsers or accounts. |
+
+On a phone, every export opens the system share sheet (**Save to Files**, **Save Image**, AirDrop, Mail…) instead of a new browser page. Safari only allows that shortly after a tap, so when a slow export (usually PDF) misses that window, a small **Your file is ready** box asks for one more tap. On a computer the file downloads as usual.
 
 ## Traditional Chinese details
 
@@ -81,7 +95,7 @@ detection, use a sharp, well-lit photo taken straight on, with printed (not hand
 
 ## How text is found
 
-- **Finding and reading text:** PaddleOCR PP-OCRv6 Small (the official ONNX exports, from the pinned npm package `@arcships/light-ocr-model-ppocrv6-small@0.3.4`, served by jsDelivr). On 20 benchmark posters it read 77.1% of characters and 56.2% of lines exactly, against 72.1% and 43.1% for PP-OCRv5 mobile, at a similar download size. A detection model finds every text region, in any layout including vertical; a recognition model then reads each region. Vertical regions are rotated first, as PaddleOCR does. Detection runs twice: once on the whole image at up to about 1.4 megapixels, where display lettering is found whole, and once larger (up to 2400 px) in overlapping 1024 px tiles, which only adds or improves small print. Capping the whole-image pass and tiling the large one keep memory within what phone browsers allow (a phone photo peaks at about 1.15 GB in Chromium, against 2.65 GB before; iPhone Safari closed the tab). One model reads Traditional and Simplified Chinese, English and Japanese, with an 18,709-character dictionary.
+- **Finding and reading text:** PaddleOCR PP-OCRv6 Small (the official ONNX exports, from the pinned npm package `@arcships/light-ocr-model-ppocrv6-small@0.3.4`, served by jsDelivr). On 20 benchmark posters it read 77.1% of characters and 56.2% of lines exactly, against 72.1% and 43.1% for PP-OCRv5 mobile, at a similar download size. A detection model finds every text region, in any layout including vertical; a recognition model then reads each region. Vertical regions are rotated first, as PaddleOCR does. Detection runs twice: once on the whole image at up to about 1.4 megapixels, where display lettering is found whole, and once larger (up to 2400 px) in overlapping 1024 px tiles, which only adds or improves small print. Capping the whole-image pass and tiling the large one keep memory within what phone browsers allow (a phone photo peaks at about 0.95 GB in Chromium, against 2.65 GB before, when iPhone Safari closed the tab; afterwards it settles at about 0.5 GB). One model reads Traditional and Simplified Chinese, English and Japanese, with an 18,709-character dictionary.
 - **Taiwan forms:** occasional Simplified outputs (国, 创) are converted with [OpenCC](https://github.com/BYVoid/OpenCC) (Mainland → Taiwan characters, no vocabulary changes); 台 is kept as written.
 - **Unreadable areas** (below 50% reading confidence, usually logos or tiny print) are left as in the photo rather than replaced with gibberish.
 - **Vertical labels split into single characters** (第④屆) are joined back into one vertical line.
@@ -91,7 +105,7 @@ detection, use a sharp, well-lit photo taken straight on, with printed (not hand
 - **Sizing:** each new line is fitted to the original letters' pixel bounds (not the OCR box); vertical columns are measured column by column. Letter height sets the font size, letter spacing absorbs width differences, and bold or regular is chosen by comparing stroke coverage. Text colour is the colour found inside the line that stops at its ends (background and artwork carry on past them), taken from the stroke centres; on the benchmark this raised colour accuracy from 61% to 72% with exact boxes, most for small text on artwork. Overlapping display lettering is shrunk just enough not to collide.
 - **Font:** the original letters are compared, shape against shape, with the same text drawn in each library font (Noto Sans TC, Noto Serif TC, Huninn 粉圓, Iansui 芫荽, all Taiwan standard forms), and the closest wins.
 - **Fallback:** if PaddleOCR can't load (very old browsers), Tesseract.js is used instead.
-- **Download size:** about 60 MB on first use (ONNX Runtime's engine 28 MB, models 31 MB, plus small scripts), then served from the browser's cache. While it downloads, the app shows megabytes done and an estimate of the time left.
+- **Download size:** about 46 MB on first use (ONNX Runtime's CPU-only engine 14 MB, models 31 MB, plus small scripts; the full ONNX Runtime build's engine is 28 MB because it also carries WebGPU support this app doesn't use), then served from the browser's cache. While it downloads, the app shows megabytes done and an estimate of the time left.
 
 ## OCR accuracy
 
@@ -124,6 +138,7 @@ A **Sign in for cloud** button then appears. Once you're signed in, **Save templ
 | `app.js` | Editor: canvas, OCR → text boxes, panel, undo, erase tool, open/save, export menu. |
 | `sw.js` | Service worker: offline use and stored downloads. |
 | `paddle.js` | PaddleOCR PP-OCRv6 detection and recognition with ONNX Runtime Web. |
+| `reader-worker.js` | Runs the two models in a background worker, closed after each photo. |
 | `ocr.js` | Calls PaddleOCR, with a Tesseract.js fallback. |
 | `imaging.js` | Photo loading, text removal, text-colour estimate. |
 | `fonts.js` | Font list, font loading, HarfBuzz subsetting. |
@@ -133,7 +148,7 @@ A **Sign in for cloud** button then appears. Once you're signed in, **Save templ
 | `config.js` | Supabase settings (blank = browser-only). |
 | `supabase-schema.sql` | One-time database setup. |
 
-Libraries load from jsDelivr with pinned versions: Fabric.js 7.4.0, ONNX Runtime Web 1.30.0, PP-OCRv6 Small models (@arcships/light-ocr-model-ppocrv6-small 0.3.4), opencc-js 1.4.2, Tesseract.js 7.0.0,
+Libraries load from jsDelivr with pinned versions: Fabric.js 7.4.0, ONNX Runtime Web 1.30.0 (the CPU-only build, `ort.wasm.min.js`), PP-OCRv6 Small models (@arcships/light-ocr-model-ppocrv6-small 0.3.4), opencc-js 1.4.2, Tesseract.js 7.0.0,
 pdf-lib 1.17.1, @pdf-lib/fontkit 1.1.1, ag-psd 31.0.2, PptxGenJS 4.0.1, harfbuzzjs 1.6.2 and
 supabase-js 2.117.2. Check `export.js → textGeometry()` before upgrading Fabric, because it
 mirrors Fabric 7's text-baseline maths so the PDF and PSD line up with the canvas.

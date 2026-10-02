@@ -21,12 +21,14 @@ const ORT_WASM = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/';
 const DET = { limitSide: 960, maxSide: 2400, fineSide: 1920, wholeArea: 1.4e6, tile: 1024, tileMargin: 160, smallText: 48, thresh: 0.3, boxThresh: 0.6, unclip: 2.0, mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225] };
 const REC_HEIGHT = 48;
 
-const ORT_JS = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ort.min.js';
-// The runtime's engine (28 MB), the biggest first-time download. Fetched here
-// with the models so the progress and countdown cover it.
-const ORT_WASM_FILE = `${ORT_WASM}ort-wasm-simd-threaded.jsep.wasm`;
+// The CPU-only build: the full ort.min.js also carries WebGPU/WebNN support
+// this app doesn't use, which doubles the engine (28 MB) and its memory.
+const ORT_JS = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ort.wasm.min.js';
+// The runtime's engine (14 MB). Fetched here with the models so the progress
+// and countdown cover it.
+const ORT_WASM_FILE = `${ORT_WASM}ort-wasm-simd-threaded.wasm`;
 // File sizes, for the countdown when a server doesn't send a length.
-const KNOWN_SIZE = { [MODELS[0].det]: 9880512, [MODELS[0].rec]: 21159378, [ORT_WASM_FILE]: 28312028 };
+const KNOWN_SIZE = { [MODELS[0].det]: 9880512, [MODELS[0].rec]: 21159378, [ORT_WASM_FILE]: 14239897 };
 
 /**
  * A downloader that adds up all files in flight and reports one progress:
@@ -83,32 +85,60 @@ function loadScript(src) {
   });
 }
 
+/**
+ * The models run in reader-worker.js, a background worker this file starts
+ * for each photo and closes afterwards, so the page keeps responding (on a
+ * phone the work takes a minute or more) and the memory comes back after.
+ * Returns { run(model, {data, dims}) → {data, dims}, close() }.
+ */
+function startReader({ det, rec, engine }) {
+  const worker = new Worker(new URL(`reader-worker.js${new URL(import.meta.url).search}`, import.meta.url));
+  const pending = new Map();
+  let next = 0;
+  const call = (msg, transfer = []) => new Promise((resolve, reject) => {
+    const id = ++next;
+    pending.set(id, { resolve, reject });
+    worker.postMessage({ ...msg, id }, transfer);
+  });
+  const failAll = (err) => { for (const p of pending.values()) p.reject(err); pending.clear(); };
+  worker.onmessage = ({ data: m }) => {
+    const p = pending.get(m.id);
+    if (!p) return;
+    pending.delete(m.id);
+    if (m.ok) p.resolve(m); else p.reject(new Error(m.error));
+  };
+  worker.onerror = (e) => { e.preventDefault?.(); failAll(new Error(e.message || 'Text reader stopped')); };
+  const ready = call({ type: 'init', ortJs: ORT_JS, wasmPaths: ORT_WASM, engine, det, rec });
+  return {
+    ready,
+    run: (model, { data, dims }) => call({ type: 'run', model, data, dims }, [data.buffer]),
+    close: () => { failAll(new Error('Text reader closed')); worker.terminate(); },
+  };
+}
+
+// Downloaded once per visit (and kept by the offline store): ≈45 MB, much less
+// than the runtime's working memory that closing the worker gives back.
 let loading = null;
+let spare = null; // the reader that load() opened to check the models, for the first photo
 async function load(report) {
   loading ||= (async () => {
-    if (!self.ort) await loadScript(ORT_JS);
-    ort.env.wasm.wasmPaths = ORT_WASM;
-    ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 1) : 1;
-    // Run the models in a background worker, so the page keeps responding
-    // (on a phone the work takes a minute or more).
-    ort.env.wasm.proxy = true;
     await self.templateMakerOffline; // see app.js: lets the offline store keep this download
     const fetchBytes = downloader(report);
     // If this fails, the runtime fetches its engine itself (just without progress).
     const wasm = fetchBytes(ORT_WASM_FILE).catch(() => null);
-    const opts = { executionProviders: ['wasm'], graphOptimizationLevel: 'all' };
-    let det; let rec; let entries; let lastError;
+    let files; let entries; let lastError;
     for (const model of MODELS) {
       try {
-        const [detBytes, recBytes, dictText] = await Promise.all([
+        const [det, rec, dictText] = await Promise.all([
           fetchBytes(model.det),
           fetchBytes(model.rec),
           fetch(model.dict).then((r) => { if (!r.ok) throw new Error(`Model download failed (${r.status})`); return r.text(); }),
         ]);
-        const engine = await wasm;
-        if (engine) ort.env.wasm.wasmBinary = engine;
-        [det, rec] = await Promise.all([ort.InferenceSession.create(detBytes, opts), ort.InferenceSession.create(recBytes, opts)]);
-        ort.env.wasm.wasmBinary = undefined; // the worker has its own copy now; free this page's 28 MB
+        files = { det, rec, engine: await wasm };
+        // Check the models open before settling on them (else try the next).
+        const reader = startReader(files);
+        try { await reader.ready; } catch (e) { reader.close(); throw e; }
+        spare = reader;
         // CTC: index 0 is "blank", then the dictionary, then a space. A .json
         // dictionary is {"characters": [...]}; a .txt one has one character per
         // line (the v5 export also has a stray empty line that is not a class).
@@ -124,7 +154,7 @@ async function load(report) {
     const chars = ['', ...entries, ' '];
     if (!self.OpenCC) await loadScript(OPENCC_JS).catch(() => {});
     const cn2tw = self.OpenCC ? OpenCC.Converter({ from: 'cn', to: 'tw' }) : (t) => t;
-    return { det, rec, chars, cn2tw };
+    return { files, chars, cn2tw };
   })().catch((e) => { loading = null; throw e; });
   return loading;
 }
@@ -147,7 +177,7 @@ function toTensor(ctx, w, h, mean, std, x = 0, y = 0) {
     out[plane + i] = (g - mean[1]) / std[1];
     out[2 * plane + i] = (r - mean[2]) / std[2];
   }
-  return new ort.Tensor('float32', out, [1, 3, h, w]);
+  return { data: out, dims: [1, 3, h, w] };
 }
 
 /**
@@ -176,13 +206,11 @@ async function detect(session, source, side, { tiled = false, onTile = () => {} 
   for (const ty of ys) {
     for (const tx of xs) {
       const tw = Math.min(T, w); const th = Math.min(T, h);
-      const out = await session.run({ [session.inputNames[0]]: toTensor(ctx, tw, th, DET.mean, DET.std, tx, ty) });
-      const t = out[session.outputNames[0]];
+      const t = await session(toTensor(ctx, tw, th, DET.mean, DET.std, tx, ty));
       // Keep each tile's inner part (its margin is unreliable), except at the image edges.
       const ix0 = tx === 0 ? 0 : M; const iy0 = ty === 0 ? 0 : M;
       const ix1 = tx + tw >= w ? tw : tw - M; const iy1 = ty + th >= h ? th : th - M;
       for (let y = iy0; y < iy1; y++) prob.set(t.data.subarray(y * tw + ix0, y * tw + ix1), (ty + y) * w + tx + ix0);
-      t.dispose?.();
       onTile(++tile / (ys.length * xs.length));
     }
   }
@@ -248,8 +276,7 @@ async function recognize(session, chars, source, box, among = null) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   const input = toTensor(ctx, W, REC_HEIGHT, [0.5, 0.5, 0.5], [0.5, 0.5, 0.5]);
   c.width = 0; c.height = 0;
-  const out = await session.run({ [session.inputNames[0]]: input });
-  const t = out[session.outputNames[0]];
+  const t = await session(input);
   const [, steps, classes] = t.dims;
   if (among) {
     let bestCh = ''; let bestP = 0;
@@ -281,7 +308,20 @@ async function recognize(session, chars, source, box, among = null) {
  */
 export async function paddleDetect(source, { onProgress } = {}) {
   const notify = onProgress || (() => {});
-  const { det, rec, chars, cn2tw } = await load(notify);
+  const { files, chars, cn2tw } = await load(notify);
+  const reader = spare || startReader(files);
+  spare = null;
+  try {
+    await reader.ready;
+    return await readAll(source, reader, chars, cn2tw, notify);
+  } finally {
+    reader.close();
+  }
+}
+
+async function readAll(source, reader, chars, cn2tw, notify) {
+  const det = (input) => reader.run('det', input);
+  const rec = (input) => reader.run('rec', input);
   notify({ status: 'finding text', progress: 0 });
   // Two passes. The whole image, at most ~1.4 megapixels so it fits a phone's
   // memory, finds display lettering whole (tiles could cut a big date).

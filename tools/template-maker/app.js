@@ -83,7 +83,8 @@ async function withBusy(label, fn) {
     return await fn();
   } catch (e) {
     console.error(e);
-    toast(e.message || String(e), 'error', 6000);
+    const outOfMemory = e?.name === 'InvalidStateError' || /invalid state/i.test(e?.message);
+    toast(outOfMemory ? t('errMemory') : e.message || String(e), 'error', outOfMemory ? 12000 : 6000);
     return undefined;
   } finally {
     setBusy(null);
@@ -266,9 +267,30 @@ function zoomAround(z, clientX, clientY) {
 })();
 new ResizeObserver(() => state.zoom === 'fit' && applyZoom()).observe($('#stage'));
 
+/** Give a canvas's memory back now (Safari otherwise frees it late). */
+const releaseCanvas = (c) => { if (c) { c.width = 0; c.height = 0; } };
+
+/**
+ * Remove text boxes and free their drawing caches straight away. Safari counts
+ * every canvas against one limit per tab until it gets round to freeing it;
+ * past that limit new images fail ("The object is in an invalid state").
+ */
+function removeObjects(objs) {
+  canvas.remove(...objs);
+  for (const o of objs) { releaseCanvas(o._cacheCanvas); o.dispose(); }
+}
+
+/** Swap in a new photo, freeing the previous one's canvases. */
+function replacePhoto(original, clean) {
+  const old = [state.original, state.clean].filter((c) => c && c !== original && c !== clean);
+  state.original = original;
+  state.clean = clean;
+  return () => old.forEach(releaseCanvas); // call once nothing shows the old ones
+}
+
 function resetCanvas(w, h) {
   canvas.discardActiveObject();
-  canvas.remove(...canvas.getObjects());
+  removeObjects(canvas.getObjects());
   canvas.setDimensions({ width: w, height: h });
   state.eraseUndo = [];
   setTool('select');
@@ -301,7 +323,7 @@ function pushHistory() {
 async function restoreObjects(objects) {
   history.paused = true;
   canvas.discardActiveObject();
-  canvas.remove(...canvas.getObjects());
+  removeObjects(canvas.getObjects());
   const objs = await fabric.util.enlivenObjects(objects);
   await ensureFontsLoaded(objs);
   canvas.add(...objs);
@@ -381,15 +403,21 @@ function inkAt100(text, o) {
   };
 }
 
+// Two scratch canvases reused for every trial rendering while matching fonts
+// (hundreds per photo): new canvases each time added up to ~400 MB that Safari
+// only freed later, and past its limit images fail. Emptied after each photo.
+const scratch = [document.createElement('canvas'), document.createElement('canvas')];
+const freeScratch = () => scratch.forEach(releaseCanvas);
+
 /** Share of the letter box that `text` covers when drawn in the editor font at this weight. */
 function inkDensity(text, family, weight, fs) {
-  const c = document.createElement('canvas');
+  const c = scratch[0];
   measureCtx.font = `${weight} ${fs}px "${family}"`;
   const m = measureCtx.measureText(text);
   const w = Math.ceil(m.actualBoundingBoxLeft + m.actualBoundingBoxRight) + 2;
   const h = Math.ceil(m.actualBoundingBoxAscent + m.actualBoundingBoxDescent) + 2;
   if (w < 3 || h < 3) return 0;
-  c.width = w; c.height = h;
+  c.width = w; c.height = h; // resizing also clears it
   const g = c.getContext('2d', { willReadFrequently: true });
   g.font = measureCtx.font;
   g.fillText(text, m.actualBoundingBoxLeft + 1, m.actualBoundingBoxAscent + 1);
@@ -408,12 +436,12 @@ function renderedMask(text, family, weight, w, h) {
   const iw = Math.ceil(m.actualBoundingBoxLeft + m.actualBoundingBoxRight);
   const ih = Math.ceil(m.actualBoundingBoxAscent + m.actualBoundingBoxDescent);
   if (iw < 2 || ih < 2) return null;
-  const src = document.createElement('canvas');
+  const src = scratch[0];
   src.width = iw; src.height = ih;
-  const sg = src.getContext('2d');
+  const sg = src.getContext('2d', { willReadFrequently: true });
   sg.font = measureCtx.font;
   sg.fillText(text, m.actualBoundingBoxLeft, m.actualBoundingBoxAscent);
-  const dst = document.createElement('canvas');
+  const dst = scratch[1];
   dst.width = w; dst.height = h;
   const dg = dst.getContext('2d', { willReadFrequently: true });
   dg.drawImage(src, 0, 0, w, h);
@@ -692,9 +720,6 @@ function withoutDiscs(src, lines) {
   return c;
 }
 
-/** Give a temporary canvas's memory back now (Safari otherwise frees it late). */
-const releaseCanvas = (c) => { if (c) { c.width = 0; c.height = 0; } };
-
 async function convertLines(lines) {
   // Fit new text to the letters themselves, not to the OCR box around them.
   // A date with a weekday badge beside it is measured with the badge's disc
@@ -742,6 +767,7 @@ async function convertLines(lines) {
     g.fill();
   }
   releaseCanvas(noDiscs);
+  freeScratch();
   return built.map((b) => b.obj);
 }
 
@@ -786,7 +812,7 @@ function askAboutPictureText(lines) {
   });
 }
 
-/** "Downloading the text reader, first time only: 12 of 60 MB · about 40 s left". */
+/** "Downloading the text reader, first time only: 12 of 46 MB · about 40 s left". */
 function downloadLabel({ loaded, total, eta }) {
   const mb = (n) => (n / 1e6).toFixed(0);
   let left = t('ocr:downloadingEstimating');
@@ -809,7 +835,7 @@ async function runDetect() {
     });
     history.paused = true;
     canvas.discardActiveObject();
-    canvas.remove(...existing);
+    removeObjects(existing);
 
     // Readings below 50% confidence are mostly logos and tiny print read as
     // gibberish; leave those areas exactly as in the photo instead.
@@ -820,12 +846,13 @@ async function runDetect() {
     pictureLines = lines.filter((l) => !l.badge && looksLikePictureText(inkBounds(state.original, l.bbox, { vertical: l.vertical })));
     lines = lines.filter((l) => !pictureLines.includes(l));
 
-    state.clean = cloneCanvas(state.original);
+    const freeOld = replacePhoto(state.original, cloneCanvas(state.original));
     state.eraseUndo = [];
     const objs = await convertLines(lines);
     separateLines(objs);
     state.bgDirty = true;
     setBackground(state.clean);
+    freeOld();
     if (objs.length) canvas.add(...objs);
     history.paused = false;
     pushHistory();
@@ -1175,8 +1202,8 @@ async function newFromFile(file) {
   if (!looksLikeImage) { toast(t('notImage'), 'warn', 6000); return; }
   if (!confirmDiscard()) return;
   await withBusy(t('loadingPhoto'), async () => {
-    state.original = await fileToCanvas(file);
-    state.clean = cloneCanvas(state.original);
+    const original = await fileToCanvas(file);
+    const freeOld = replacePhoto(original, cloneCanvas(original));
     state.id = crypto.randomUUID();
     state.name = file.name.replace(/\.[^.]+$/, '') || t('untitled');
     state.bgDirty = true;
@@ -1185,6 +1212,7 @@ async function newFromFile(file) {
     $('#docName').value = state.name;
     resetCanvas(state.original.width, state.original.height);
     setBackground(state.clean);
+    freeOld();
     resetHistory();
     markDirty();
     refreshEnabled();
@@ -1220,7 +1248,7 @@ async function buildRecord({ full = false } = {}) {
 async function save() {
   if (!hasDoc()) return;
   const store = currentStore();
-  await withBusy(t('saving', { where: t(store.whereKey) }), async () => {
+  return await withBusy(t('saving', { where: t(store.whereKey) }), async () => {
     const key = storeKey(store);
     await store.put(await buildRecord({ full: state.home !== key }));
     state.home = key;
@@ -1230,6 +1258,42 @@ async function save() {
     updateTitle();
     toast(t('saved', { where: t(store.whereKey) }), 'ok', 6000);
     confirmOnButton($('#saveBtn'), t('savedShort'));
+    return true;
+  }) ?? false;
+}
+
+/** Close the template (asking to save unsaved changes) and go back to the start. */
+async function closeDoc() {
+  if (!hasDoc()) return;
+  if (state.dirty) {
+    const choice = await askToSaveFirst();
+    if (choice === 'cancel') return;
+    if (choice === 'save' && !(await save())) return; // a failed save keeps the template open
+  }
+  resetCanvas(800, 600);
+  canvas.backgroundImage = null;
+  replacePhoto(null, null)();
+  Object.assign(state, { id: null, name: '', bgDirty: false, origDirty: false, dirty: false, home: null, eraseUndo: [] });
+  $('#docName').value = '';
+  resetHistory();
+  updateTitle();
+  refreshEnabled();
+  renderLayers();
+  renderProps();
+  window.scrollTo({ top: 0 });
+}
+
+/** Resolves 'save', 'discard' or 'cancel'. */
+function askToSaveFirst() {
+  const dlg = $('#closeDialog');
+  $('#closeText').textContent = t('closeText', { name: state.name || t('untitled') });
+  return new Promise((resolve) => {
+    const done = (choice) => { dlg.close(); resolve(choice); };
+    $('#closeSave').onclick = () => done('save');
+    $('#closeDiscard').onclick = () => done('discard');
+    $('#closeCancel').onclick = () => done('cancel');
+    dlg.oncancel = (e) => { e.preventDefault(); done('cancel'); }; // Esc
+    dlg.showModal();
   });
 }
 
@@ -1250,9 +1314,9 @@ async function openRecord(rec, homeKey) {
     const url = URL.createObjectURL(blob);
     try { return await urlToCanvas(url); } finally { URL.revokeObjectURL(url); }
   };
-  state.clean = await toCanvas(rec.background);
-  if (!state.clean) throw new Error(t('errNoBackground'));
-  state.original = await toCanvas(rec.original);
+  const clean = await toCanvas(rec.background);
+  if (!clean) throw new Error(t('errNoBackground'));
+  const freeOld = replacePhoto(await toCanvas(rec.original), clean);
   state.id = rec.id || crypto.randomUUID();
   state.name = rec.name || t('untitled');
   state.home = homeKey;
@@ -1261,6 +1325,7 @@ async function openRecord(rec, homeKey) {
   $('#docName').value = state.name;
   resetCanvas(rec.width || state.clean.width, rec.height || state.clean.height);
   setBackground(state.clean);
+  freeOld();
   await restoreObjects(rec.objects || []);
   resetHistory();
   state.dirty = !homeKey;
@@ -1541,11 +1606,16 @@ function init() {
   });
   $('#detectBtn').addEventListener('click', runDetect);
   $('#addTextBtn').addEventListener('click', addText);
-  $('#eraseBtn').addEventListener('click', () => setTool(state.tool === 'erase' ? 'select' : 'erase'));
+  $('#eraseBtn').addEventListener('click', () => {
+    setTool(state.tool === 'erase' ? 'select' : 'erase');
+    // On phones the panel is under the photo: bring the photo up to drag on.
+    if (state.tool === 'erase' && matchMedia('(max-width: 760px)').matches) $('#stage').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
   $('#undoEraseBtn').addEventListener('click', undoErase);
   $('#undoBtn').addEventListener('click', undo);
   $('#redoBtn').addEventListener('click', redo);
   $('#saveBtn').addEventListener('click', save);
+  $('#closeBtn').addEventListener('click', closeDoc);
   $('#openBtn').addEventListener('click', showOpenDialog);
   $('#zoom').addEventListener('change', (e) => { if (e.target.selectedOptions[0]?.dataset.custom) return; state.zoom = e.target.value; applyZoom(); });
   $('#docName').addEventListener('input', (e) => { state.name = e.target.value; markDirty(); });
@@ -1601,7 +1671,7 @@ function init() {
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').then(() => navigator.storage?.persist?.()).catch(() => {});
   // The text reader waits (up to 5 s) for the worker to take over this page,
-  // so even the first download of its 60 MB is stored for offline use.
+  // so even the first download of its 46 MB is stored for offline use.
   self.templateMakerOffline = navigator.serviceWorker.controller ? Promise.resolve() : new Promise((resolve) => {
     navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true });
     setTimeout(resolve, 5000);

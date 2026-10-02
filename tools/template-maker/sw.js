@@ -3,7 +3,7 @@
 // - This app's own files (page, scripts, styles, icons): always checked with
 //   the server when online, so updates arrive on the next open; the stored
 //   copy is used when offline.
-// - Pinned-version libraries and models from jsDelivr (≈60 MB the first time)
+// - Pinned-version libraries and models from jsDelivr (≈46 MB the first time)
 //   and Google Fonts files: stored on first use and served from storage after
 //   that, online or not. Their URLs carry exact versions, so they never change.
 // Anything else (cloud saving, sign-in) goes straight to the network.
@@ -40,7 +40,11 @@ self.addEventListener('install', (e) => e.waitUntil((async () => {
   ]);
   await self.skipWaiting();
 })()));
-self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+// Remove caches this version no longer uses (e.g. a renamed library store).
+self.addEventListener('activate', (e) => e.waitUntil((async () => {
+  for (const name of await caches.keys()) if (name !== APP && name !== LIB) await caches.delete(name);
+  await self.clients.claim();
+})()));
 
 self.addEventListener('fetch', (e) => {
   const req = e.request;
@@ -79,17 +83,35 @@ async function stored(req) {
   const cache = await caches.open(LIB);
   const hit = await cache.match(req);
   if (hit) return hit;
-  const res = await fetch(req);
-  if (res.ok && (res.type === 'cors' || res.type === 'basic')) cache.put(req, res.clone());
+  // A worker's importScripts asks without CORS, and that kind of answer can't
+  // be stored; jsDelivr allows CORS, so ask that way instead.
+  const res = await fetch(req.mode === 'no-cors' ? new Request(req.url, { mode: 'cors', credentials: 'omit' }) : req);
+  if (res.ok && (res.type === 'cors' || res.type === 'basic')) {
+    cache.put(req, res.clone()).then(() => pruneVersions(cache, req.url));
+  }
   return res;
+}
+
+/**
+ * When a library is upgraded (fabric@7.4.0 → fabric@7.5.0), drop the stored
+ * files of the old version so they don't take up space on the phone forever.
+ */
+async function pruneVersions(cache, url) {
+  const m = /^\/npm\/((?:@[^/]+\/)?[^@/]+)@([^/]+)(\/.*)?$/.exec(new URL(url).pathname);
+  if (!m) return;
+  for (const key of await cache.keys()) {
+    const k = /^\/npm\/((?:@[^/]+\/)?[^@/]+)@([^/]+)/.exec(new URL(key.url).pathname);
+    if (k && k[1] === m[1] && k[2] !== m[2]) cache.delete(key);
+  }
 }
 
 /** Drop older versions of the same file (app.js?v=old) once a new one is stored. */
 async function prune(cache, url) {
   const u = new URL(url);
-  if (!u.search) return;
+  const v = u.searchParams.get('v');
+  if (!v) return;
   for (const key of await cache.keys()) {
     const k = new URL(key.url);
-    if (k.pathname === u.pathname && k.search !== u.search) cache.delete(key);
+    if (k.pathname === u.pathname && k.searchParams.has('v') && k.searchParams.get('v') !== v) cache.delete(key);
   }
 }

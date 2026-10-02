@@ -20,14 +20,11 @@ export const OCR_MODES = {
 const CJK = '[\\u2E80-\\u2FDF\\u3000-\\u303F\\u3100-\\u312F\\u31A0-\\u31BF\\u3400-\\u4DBF\\u4E00-\\u9FFF\\uF900-\\uFAFF\\uFE30-\\uFE4F\\uFF00-\\uFFEF\\u{20000}-\\u{2FA1F}]';
 // Captures the first character instead of a lookbehind, which Safari only supports from 16.4.
 const SPACE_BETWEEN_CJK = new RegExp(`(${CJK})\\s+(?=${CJK})`, 'gu');
-const HAS_CJK = new RegExp(CJK, 'u');
 
 /** Tesseract puts spaces between Chinese characters ("今 日 特 價"); remove them. */
 export function cleanText(text) {
   return text.replace(SPACE_BETWEEN_CJK, '$1').replace(/\s+$/u, '').replace(/^\s+/u, '');
 }
-
-export const hasCjk = (text) => HAS_CJK.test(text);
 
 // One worker per language set, kept between runs: Auto detect uses a horizontal
 // and a vertical worker at the same time.

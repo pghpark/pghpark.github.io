@@ -387,6 +387,7 @@ export function letterMask(canvas, box, height = 40) {
     const dBg = Math.abs(data[i] - bg[0]) + Math.abs(data[i + 1] - bg[1]) + Math.abs(data[i + 2] - bg[2]);
     mask[k] = dFg < dBg ? 1 : 0;
   }
+  c.width = 0; c.height = 0; // give its memory back now (Safari otherwise frees it late)
   return { w, h: height, data: mask };
 }
 

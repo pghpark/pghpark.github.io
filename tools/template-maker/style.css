@@ -322,7 +322,11 @@ dialog form, dialog > p { padding: 12px 16px; margin: 0; }
 @media (max-width: 760px) {
   /* The page scrolls as a whole, so the sticky toolbar stays in reach. */
   html, body { height: auto; min-height: 100%; }
-  .toolbar { padding: 6px 12px; }
+  .toolbar { padding: 8px 12px 4px; gap: 6px; }
+  .toolbar .btn.big { min-width: 0; padding: 8px 4px; font-size: 16px; }
+  .toolbar-sep { display: none; }
+  .zoom-field select { max-width: 96px; padding-left: 6px; padding-right: 4px; }
+  .zoom-label { display: none; } /* the menu itself shows Fit / 100%… */
   .workspace { flex-direction: column; }
   .stage-area { min-height: 55vh; }
   .panel { width: auto; border-left: 0; border-top: 1px solid var(--line); }
@@ -366,6 +370,29 @@ dialog form, dialog > p { padding: 12px 16px; margin: 0; }
 .toolbar::-webkit-scrollbar { display: none; }
 .toolbar .btn { flex-shrink: 0; min-height: 36px; white-space: nowrap; }
 .toolbar .field.inline { flex-shrink: 0; white-space: nowrap; }
+/* The tools used most (＋ Text, Undo, Redo): big, raised keys that sink when pressed. */
+.toolbar .btn.big {
+  flex: 1 1 0;
+  max-width: 180px;
+  min-height: 50px;
+  padding: 8px 14px;
+  font-size: 17px;
+  font-weight: 700;
+  border-width: 1.5px;
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  box-shadow: 0 4px 0 color-mix(in srgb, var(--accent) 35%, var(--line));
+  margin-bottom: 4px;
+}
+.toolbar .btn.big:active:not(:disabled) {
+  transform: translateY(4px);
+  box-shadow: 0 0 0 transparent, inset 0 3px 8px rgba(0, 0, 0, 0.3);
+  background: color-mix(in srgb, var(--accent) 18%, var(--panel));
+}
+.toolbar .btn.big:disabled { box-shadow: none; }
+.zoom-field select { min-height: 44px; }
+.btn.grow { flex: 1; }
+/* No double-tap-to-zoom delay, so Undo can be tapped quickly. */
+.btn { touch-action: manipulation; }
 .toolbar-sep { width: 1px; align-self: stretch; margin: 4px 2px; background: var(--line); flex-shrink: 0; }
 
 /* Help tooltips (data-tip) */

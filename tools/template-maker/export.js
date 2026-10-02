@@ -97,10 +97,19 @@ async function prepare(canvas) {
   return texts;
 }
 
+// Safari can't make a canvas over 16.7 megapixels (4096 × 4096); a bigger
+// export fails or comes out blank, so 2× and 3× stop at that size.
+const MAX_CANVAS_AREA = 16777216;
+
 export async function exportRaster(canvas, format, quality = 0.92, multiplier = 1) {
   await prepare(canvas);
-  const el = canvas.toCanvasElement(multiplier);
-  return canvasToBlob(el, `image/${format}`, quality);
+  const fit = Math.sqrt(MAX_CANVAS_AREA / (canvas.getWidth() * canvas.getHeight()));
+  const el = canvas.toCanvasElement(Math.min(multiplier, fit));
+  try {
+    return await canvasToBlob(el, `image/${format}`, quality);
+  } finally {
+    el.width = 0; el.height = 0; // give its memory back now (Safari otherwise frees it late)
+  }
 }
 
 export async function exportSVG(canvas) {
@@ -237,6 +246,8 @@ export async function exportPSD(canvas, background, original) {
     children,
   };
   const buf = agPsd.writePsd(psd, { generateThumbnail: true });
+  // Free the copies made here (not the photo and background, which stay in use).
+  for (const c of [psd.canvas, ...children.map((ch) => ch.canvas)]) if (c !== original && c !== background) { c.width = 0; c.height = 0; }
   return new Blob([buf], { type: 'image/vnd.adobe.photoshop' });
 }
 
