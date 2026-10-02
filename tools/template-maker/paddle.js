@@ -1,7 +1,7 @@
 // Text detection + recognition with PaddleOCR PP-OCRv6 (Apache-2.0), run in
 // the browser with ONNX Runtime Web. The Chinese model reads Simplified and
 // Traditional Chinese, English and Japanese; its dictionary has 18,709
-// characters. Unlike Tesseract it first *finds* every text region (any layout,
+// characters. It first *finds* every text region (any layout,
 // any style), then reads each one, so every visible piece of text gets a box.
 
 // PP-OCRv6 Small (Apache-2.0): on 20 benchmark posters it read 77.1% of

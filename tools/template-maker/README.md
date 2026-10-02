@@ -104,7 +104,6 @@ On a phone, every export opens the system share sheet (**Save to Files**, **Save
 - **Text inside pictures** (a shop sign, a banner, a sheet of paper someone holds) is spotted by the small plain patch it sits on: the colour around it doesn't run on into the poster's background, and differs from what lies around the text or the patch. On 40 benchmark posters 2.1% of ordinary lines look like that. Because that guess is wrong now and then, the app lists these lines with a tick box each and converts only the ticked ones. Any converted line can be put back as picture with the picture button in the pop-up editor (**↶ Erase** undoes that).
 - **Sizing:** each new line is fitted to the original letters' pixel bounds (not the OCR box); vertical columns are measured column by column. Letter height sets the font size, letter spacing absorbs width differences, and bold or regular is chosen by comparing stroke coverage. Text colour is the colour found inside the line that stops at its ends (background and artwork carry on past them), taken from the stroke centres; on the benchmark this raised colour accuracy from 61% to 72% with exact boxes, most for small text on artwork. Overlapping display lettering is shrunk just enough not to collide.
 - **Font:** the original letters are compared, shape against shape, with the same text drawn in each library font (Noto Sans TC, Noto Serif TC, Huninn 粉圓, Iansui 芫荽, all Taiwan standard forms), and the closest wins.
-- **Fallback:** if PaddleOCR can't load (very old browsers), Tesseract.js is used instead.
 - **Download size:** about 46 MB on first use (ONNX Runtime's CPU-only engine 14 MB, models 31 MB, plus small scripts; the full ONNX Runtime build's engine is 28 MB because it also carries WebGPU support this app doesn't use), then served from the browser's cache. While it downloads, the app shows megabytes done and an estimate of the time left.
 
 ## OCR accuracy
@@ -139,7 +138,6 @@ A **Sign in for cloud** button then appears. Once you're signed in, **Save templ
 | `sw.js` | Service worker: offline use and stored downloads. |
 | `paddle.js` | PaddleOCR PP-OCRv6 detection and recognition with ONNX Runtime Web. |
 | `reader-worker.js` | Runs the two models in a background worker, closed after each photo. |
-| `ocr.js` | Calls PaddleOCR, with a Tesseract.js fallback. |
 | `imaging.js` | Photo loading, text removal, text-colour estimate. |
 | `fonts.js` | Font list, font loading, HarfBuzz subsetting. |
 | `export.js` | PNG/JPEG/WebP/SVG/PDF/PPTX/PSD writers. |
@@ -148,7 +146,7 @@ A **Sign in for cloud** button then appears. Once you're signed in, **Save templ
 | `config.js` | Supabase settings (blank = browser-only). |
 | `supabase-schema.sql` | One-time database setup. |
 
-Libraries load from jsDelivr with pinned versions: Fabric.js 7.4.0, ONNX Runtime Web 1.30.0 (the CPU-only build, `ort.wasm.min.js`), PP-OCRv6 Small models (@arcships/light-ocr-model-ppocrv6-small 0.3.4), opencc-js 1.4.2, Tesseract.js 7.0.0,
+Libraries load from jsDelivr with pinned versions: Fabric.js 7.4.0, ONNX Runtime Web 1.30.0 (the CPU-only build, `ort.wasm.min.js`), PP-OCRv6 Small models (@arcships/light-ocr-model-ppocrv6-small 0.3.4), opencc-js 1.4.2,
 pdf-lib 1.17.1, @pdf-lib/fontkit 1.1.1, ag-psd 31.0.2, PptxGenJS 4.0.1, harfbuzzjs 1.6.2 and
 supabase-js 2.117.2. Check `export.js → textGeometry()` before upgrading Fabric, because it
 mirrors Fabric 7's text-baseline maths so the PDF and PSD line up with the canvas.

@@ -1,4 +1,4 @@
-import { detectText } from './ocr.js';
+import { paddleDetect as detectText } from './paddle.js';
 import { t, applyI18n, setLang, getLang, LANGS } from './i18n.js';
 import {
   fileToCanvas, urlToCanvas, cloneCanvas, eraseText, canvasToBlob, inkBounds, letterMask, sampleRing, textColorByContrast, plainPatch,
@@ -832,6 +832,10 @@ async function runDetect() {
   await withBusy(t('detecting'), async () => {
     let lines = await detectText(state.original, {
       onProgress: (m) => setBusy(m.status === 'downloading' ? downloadLabel(m) : `${t(`ocr:${m.status}`).replace(/^ocr:/, '')}…`, typeof m.progress === 'number' ? m.progress : null),
+    }).catch((e) => {
+      console.error(e);
+      // Out of memory keeps its own message (see withBusy).
+      throw e?.name === 'InvalidStateError' ? e : new Error(t('errReader'));
     });
     history.paused = true;
     canvas.discardActiveObject();
