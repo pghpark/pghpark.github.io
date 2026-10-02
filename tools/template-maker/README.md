@@ -10,9 +10,29 @@ the `master` branch.
 Everything runs in the browser: GitHub Pages only serves static files, so
 there is no server to maintain.
 
+## Languages
+
+The interface is in **English (UK)** or **繁體中文**. Use the language menu at the top right. The app remembers your choice in that browser. On a first visit it picks Chinese for Chinese-language browsers and English otherwise.
+
+Every setting and export format has an **(i)** button that explains what it does, in either language.
+
+To send someone the app already in their language, add `?lang=` to the link:
+
+- https://pghpark.github.io/tools/template-maker/?lang=zh (繁體中文)
+- https://pghpark.github.io/tools/template-maker/?lang=en (English)
+
+Every interface string, in both languages, is in `i18n.js`.
+
+## Photo formats
+
+JPG, PNG, WebP, GIF, BMP and AVIF work in every current browser. iPhone **HEIC** photos only open in
+Safari. Choosing a photo from an iPhone's library usually converts it to JPG automatically, but dragging a
+`.heic` file into Chrome or Edge on a computer won't work, so export it as JPG first. For the best text
+detection, use a sharp, well-lit photo taken straight on, with printed (not handwritten) text.
+
 ## What it does
 
-1. **Upload a photo** (button, drag-and-drop, or paste). Large photos are scaled to 2400 px on the long side.
+1. **Upload a photo** (**New template from photo**, drag-and-drop, or paste). Large photos are scaled to 2400 px on the long side.
 2. **Detect text.** [Tesseract.js](https://github.com/naptha/tesseract.js) reads the text with the
    `chi_tra` + `eng` models (`chi_tra_vert` for vertical text). The spaces Tesseract puts between
    Chinese characters are removed.
@@ -22,7 +42,7 @@ there is no server to maintain.
    from the photo. Double-click to type on the canvas, or use the side panel (which works well with
    Chinese input methods). You can change the font, bold, size, colour, alignment, line height,
    vertical text (直排) and opacity, plus undo/redo.
-5. **Save** to this browser (IndexedDB), or to the cloud once Supabase is set up (below).
+5. **Save template** to this browser (IndexedDB), or to the cloud once Supabase is set up (below).
 6. **Export:**
 
 | Format | Notes |
@@ -71,8 +91,8 @@ Without this step, templates are saved only in the browser that made them.
    The anon key is meant to be public. RLS is what protects the data.
    **Never** commit the `service_role` key.
 
-A **Sign in for cloud** button then appears. Once you're signed in, **Save** goes to the cloud and
-**Open** lists both your cloud and in-browser templates.
+A **Sign in for cloud** button then appears. Once you're signed in, **Save template** goes to the cloud and
+**Open templates** lists both your cloud and in-browser templates.
 
 ## Files
 
@@ -85,6 +105,7 @@ A **Sign in for cloud** button then appears. Once you're signed in, **Save** goe
 | `fonts.js` | Font list, font loading, HarfBuzz subsetting. |
 | `export.js` | PNG/JPEG/WebP/SVG/PDF/PSD writers. |
 | `storage.js` | IndexedDB and Supabase stores, `.json` template files. |
+| `i18n.js` | Interface text in English (UK) and 繁體中文, and the language switch. |
 | `config.js` | Supabase settings (blank = browser-only). |
 | `supabase-schema.sql` | One-time database setup. |
 

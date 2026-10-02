@@ -3,10 +3,10 @@
 // and cached in IndexedDB by Tesseract.js.
 
 export const OCR_MODES = {
-  auto: { langs: ['chi_tra', 'eng'], psm: '3', label: 'Auto layout (橫排)' },
-  block: { langs: ['chi_tra', 'eng'], psm: '6', label: 'Single block of text' },
-  sparse: { langs: ['chi_tra', 'eng'], psm: '11', label: 'Scattered text (posters, signs)' },
-  vertical: { langs: ['chi_tra_vert'], psm: '5', label: 'Vertical text (直排)' },
+  auto: { langs: ['chi_tra', 'eng'], psm: '3', labelKey: 'modeAuto' },
+  block: { langs: ['chi_tra', 'eng'], psm: '6', labelKey: 'modeBlock' },
+  sparse: { langs: ['chi_tra', 'eng'], psm: '11', labelKey: 'modeSparse' },
+  vertical: { langs: ['chi_tra_vert'], psm: '5', labelKey: 'modeVertical' },
 };
 
 // CJK ideographs, CJK punctuation, fullwidth forms, bopomofo, extension planes.

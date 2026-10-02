@@ -8,6 +8,8 @@
 //   (curl's user agent gets plain .ttf links instead of sliced woff2).
 // - PSD export only stores the PostScript name; Photoshop needs the font
 //   installed locally (free from fonts.google.com).
+import { t } from './i18n.js';
+
 export const FONTS = {
   'Noto Sans TC': {
     400: { ps: 'NotoSansTC-Regular', url: 'https://fonts.gstatic.com/s/notosanstc/v40/-nFuOG829Oofr2wohFbTp9ifNAn722rq0MXz76Cy_Co.ttf' },
@@ -62,7 +64,7 @@ export function fetchFontBytes(family, weight) {
   const { url } = fontEntry(family, weight);
   if (!fontBytes.has(url)) {
     fontBytes.set(url, fetch(url).then((r) => {
-      if (!r.ok) throw new Error(`Font download failed (${r.status}): ${url}`);
+      if (!r.ok) throw new Error(t('errFontDownload', { status: r.status }));
       return r.arrayBuffer();
     }).catch((e) => { fontBytes.delete(url); throw e; }));
   }
@@ -90,7 +92,7 @@ export async function subsetFont(fontBuffer, text) {
   e.hb_subset_input_set_flags(input, e.hb_subset_input_get_flags(input) | 1 /* NO_HINTING */);
   const sub = e.hb_subset_or_fail(face, input);
   e.hb_subset_input_destroy(input);
-  if (!sub) throw new Error('Font subsetting failed');
+  if (!sub) throw new Error(t('errSubset'));
   const outBlob = e.hb_face_reference_blob(sub);
   const ptr = e.hb_blob_get_data(outBlob, 0);
   const out = new Uint8Array(e.memory.buffer).slice(ptr, ptr + e.hb_blob_get_length(outBlob));

@@ -1,6 +1,7 @@
 // Exporters: PNG / JPEG / WebP / SVG / PDF / PSD.
 import { fontEntry, fetchFontBytes, subsetFont, ensureFontsLoaded, normalizeWeight, FONTS } from './fonts.js';
 import { canvasToBlob } from './imaging.js';
+import { t } from './i18n.js';
 
 export const isText = (o) => o && typeof o.text === 'string' && o.visible !== false;
 
@@ -87,7 +88,7 @@ export async function exportPDF(canvas, background, name, onProgress = () => {})
   doc.setCreator('Template Maker');
   const page = doc.addPage([W, H]);
 
-  onProgress('Encoding background…');
+  onProgress(t('encodingBackground'));
   const bg = await doc.embedJpg(await (await canvasToBlob(background, 'image/jpeg', 0.92)).arrayBuffer());
   page.drawImage(bg, { x: 0, y: 0, width: W, height: H });
 
@@ -100,7 +101,7 @@ export async function exportPDF(canvas, background, name, onProgress = () => {})
   }
   const fonts = new Map();
   for (const [key, g] of groups) {
-    onProgress(`Downloading ${g.family} ${normalizeWeight(g.weight)} (first time only)…`);
+    onProgress(t('downloadingFont', { font: `${g.family} ${normalizeWeight(g.weight)}` }));
     const bytes = await fetchFontBytes(g.family, g.weight);
     const sub = await subsetFont(bytes, g.text);
     // locl:false — Noto CJK's locl swaps digits to alternate glyphs in Latin runs,

@@ -1,4 +1,5 @@
 // Canvas helpers: loading photos, removing old text, guessing text colour.
+import { t } from './i18n.js';
 
 export const MAX_SIDE = 2400;
 
@@ -20,7 +21,7 @@ export function loadImage(src) {
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error('Could not read that image'));
+    img.onerror = () => reject(new Error(t('errReadImage')));
     img.src = src;
   });
 }
@@ -150,7 +151,7 @@ export function estimateTextColor(canvas, box) {
 
 export function canvasToBlob(canvas, type = 'image/png', quality) {
   return new Promise((resolve, reject) => canvas.toBlob(
-    (b) => (b ? resolve(b) : reject(new Error('Could not encode image'))), type, quality,
+    (b) => (b ? resolve(b) : reject(new Error(t('errEncodeImage')))), type, quality,
   ));
 }
 
