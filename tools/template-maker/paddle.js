@@ -18,7 +18,7 @@ const MODELS = [
 const ORT_WASM = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/';
 
 // PaddleOCR's DB defaults, except unclip (2.0 keeps the edge characters).
-const DET = { limitSide: 960, maxSide: 2400, fineSide: 1920, smallText: 48, thresh: 0.3, boxThresh: 0.6, unclip: 2.0, mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225] };
+const DET = { limitSide: 960, maxSide: 2400, fineSide: 1920, tile: 640, tileMargin: 64, smallText: 48, thresh: 0.3, boxThresh: 0.6, unclip: 2.0, mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225] };
 const REC_HEIGHT = 48;
 
 const ORT_JS = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ort.min.js';
@@ -98,8 +98,8 @@ function canvasOf(w, h) {
 }
 
 /** Image → float tensor (N,3,H,W), BGR order like PaddleOCR (images are read with OpenCV). */
-function toTensor(ctx, w, h, mean, std) {
-  const { data } = ctx.getImageData(0, 0, w, h);
+function toTensor(ctx, w, h, mean, std, x = 0, y = 0) {
+  const { data } = ctx.getImageData(x, y, w, h);
   const out = new Float32Array(3 * w * h);
   const plane = w * h;
   for (let i = 0; i < plane; i++) {
@@ -125,9 +125,25 @@ async function detect(session, source, side) {
   const c = canvasOf(w, h);
   const ctx = c.getContext('2d', { willReadFrequently: true });
   ctx.drawImage(source, 0, 0, w, h);
-  const input = toTensor(ctx, w, h, DET.mean, DET.std);
-  const out = await session.run({ [session.inputNames[0]]: input });
-  const prob = out[session.outputNames[0]].data; // (1,1,h,w)
+  // The model works on tiles: its memory use grows with the area it is given,
+  // and a whole 2400 px photo needs more than a phone browser allows (Safari
+  // closes the tab). It only looks at local neighbourhoods, so tiles with an
+  // overlapping margin, stitched, give the same map.
+  const prob = new Float32Array(w * h);
+  const T = DET.tile; const M = DET.tileMargin;
+  const starts = (n) => { const out = []; for (let p = 0; ; p += T - 2 * M) { out.push(Math.max(0, Math.min(p, n - T))); if (p + T >= n) break; } return [...new Set(out)]; };
+  for (const ty of h <= T ? [0] : starts(h)) {
+    for (const tx of w <= T ? [0] : starts(w)) {
+      const tw = Math.min(T, w); const th = Math.min(T, h);
+      const out = await session.run({ [session.inputNames[0]]: toTensor(ctx, tw, th, DET.mean, DET.std, tx, ty) });
+      const t = out[session.outputNames[0]];
+      // Keep each tile's inner part (its margin is unreliable), except at the image edges.
+      const ix0 = tx === 0 ? 0 : M; const iy0 = ty === 0 ? 0 : M;
+      const ix1 = tx + tw >= w ? tw : tw - M; const iy1 = ty + th >= h ? th : th - M;
+      for (let y = iy0; y < iy1; y++) prob.set(t.data.subarray(y * tw + ix0, y * tw + ix1), (ty + y) * w + tx + ix0);
+      t.dispose?.();
+    }
+  }
   // Connected components on the thresholded map (4-neighbour flood fill).
   const label = new Int32Array(w * h);
   const boxes = [];
@@ -200,17 +216,19 @@ async function recognize(session, chars, source, box, among = null) {
     }
     return { text: bestCh, confidence: bestP * 100, vertical };
   }
-  let text = ''; let prev = -1; let scoreSum = 0; let count = 0;
+  let text = ''; let prev = -1; let scoreSum = 0; let count = 0; const charConf = [];
   for (let i = 0; i < steps; i++) {
     let best = 0; let bestP = -Infinity;
     for (let k = 0; k < classes; k++) {
       const p = t.data[i * classes + k];
       if (p > bestP) { bestP = p; best = k; }
     }
-    if (best !== 0 && best !== prev) { text += chars[best] ?? ''; scoreSum += bestP; count++; }
+    if (best !== 0 && best !== prev) { text += chars[best] ?? ''; charConf.push(bestP); scoreSum += bestP; count++; }
     prev = best;
   }
-  return { text: text.trim(), confidence: count ? (scoreSum / count) * 100 : 0, vertical };
+  // Per-character confidence (0–1), aligned with the characters of the untrimmed text.
+  const lead = text.length - text.trimStart().length;
+  return { text: text.trim(), confidence: count ? (scoreSum / count) * 100 : 0, vertical, charConf: charConf.slice(lead) };
 }
 
 /**
@@ -244,7 +262,31 @@ export async function paddleDetect(source, { onProgress } = {}) {
     read.push(lines);
   }
   const lines = dropRepeats(stackColumns(mergePieces(read.length > 1 ? combinePasses(read[0], read[1]) : read[0])));
-  return restoreDateSlashes(source, await readBadges(source, lines, (canvas, box, among) => recognize(rec, chars, canvas, box, among)));
+  const found = restoreDateSlashes(source, await readBadges(source, lines, (canvas, box, among) => recognize(rec, chars, canvas, box, among)));
+  // A lone Latin letter, or a lone digit read unsurely, is nearly always a
+  // speck or decoration misread ("a" or "2" for a piece of confetti).
+  return found.filter((l) => !/^[A-Za-z]$/.test(l.text.trim()) && !(/^\d$/.test(l.text.trim()) && l.confidence < 90 && !l.badge));
+}
+
+/**
+ * A longer reading replaces the short pieces it covers, but a piece may have
+ * read one of its characters more surely (屆 alone at 81%, where the whole
+ * column read 國). Keep a piece's Chinese character when it was read more
+ * confidently than the character at the same place in the longer reading.
+ */
+function keepSureCharacters(f, pieces) {
+  const chars = [...f.text];
+  if (!f.charConf || f.charConf.length !== chars.length) return f;
+  const han = /^\p{Script=Han}$/u;
+  const a0 = f.vertical ? f.bbox.y0 : f.bbox.x0; const a1 = f.vertical ? f.bbox.y1 : f.bbox.x1;
+  for (const p of pieces) {
+    const t = p.text.trim();
+    if ([...t].length !== 1 || !han.test(t)) continue;
+    const c = f.vertical ? (p.bbox.y0 + p.bbox.y1) / 2 : (p.bbox.x0 + p.bbox.x1) / 2;
+    const i = Math.min(chars.length - 1, Math.max(0, Math.floor(((c - a0) / (a1 - a0)) * chars.length)));
+    if (han.test(chars[i]) && chars[i] !== t && p.confidence / 100 > f.charConf[i]) chars[i] = t;
+  }
+  return { ...f, text: chars.join('') };
 }
 
 /**
@@ -274,7 +316,7 @@ function combinePasses(base, fine) {
     if (!small.length) { out.push(f); continue; }
     const hitLen = small.reduce((n, b) => n + len(b), 0);
     const better = len(f) > hitLen || (len(f) === hitLen && small.length === 1 && f.confidence > small[0].confidence);
-    if (better) { for (const b of small) out.splice(out.indexOf(b), 1); out.push(f); }
+    if (better) { for (const b of small) out.splice(out.indexOf(b), 1); out.push(keepSureCharacters(f, small)); }
   }
   return out;
 }

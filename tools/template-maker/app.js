@@ -1,7 +1,7 @@
 import { detectText } from './ocr.js';
 import { t, applyI18n, setLang, getLang, LANGS } from './i18n.js';
 import {
-  fileToCanvas, urlToCanvas, cloneCanvas, eraseText, canvasToBlob, inkBounds, backgroundBusyness, letterMask, sampleRing, textColorByContrast,
+  fileToCanvas, urlToCanvas, cloneCanvas, eraseText, canvasToBlob, inkBounds, letterMask, sampleRing, textColorByContrast, plainPatch,
 } from './imaging.js';
 import {
   FONTS, DEFAULT_FAMILY, MATCH_FAMILIES, ensureFontsLoaded, normalizeWeight, weightsOf, isBold, loadFontCss,
@@ -35,6 +35,11 @@ const state = {
 
 const canvas = new fabric.Canvas('c', {
   preserveObjectStacking: true,
+  // The canvas is already the photo's size (up to 2400 px), more pixels than
+  // a phone screen shows. Multiplying it by the screen density (3× on iPhone)
+  // made a 7200×5400 surface: over Safari's canvas limit and enough memory to
+  // get the tab closed.
+  enableRetinaScaling: false,
   backgroundColor: '#ffffff',
   width: 800,
   height: 600,
@@ -343,7 +348,9 @@ function inkDensity(text, family, weight, fs) {
   const { data } = g.getImageData(0, 0, w, h);
   let ink = 0;
   for (let i = 3; i < data.length; i += 4) if (data[i] > 127) ink++;
-  return ink / (w * h);
+  // Over the glyphs' own box (not the 1 px margin drawn around it), as the
+  // photo's coverage is measured over its letters' tight box.
+  return ink / Math.max(1, (w - 2) * (h - 2));
 }
 
 /** Render `text` in a font, stretched so its letters fill a w×h box, as a mask. */
@@ -573,6 +580,8 @@ function refitIfAuto(o) {
 }
 
 /** Turn OCR lines into fitted text boxes and erase their originals from the background. */
+const hexOf = (rgb) => `#${rgb.map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+
 /** A copy of the photo with a date's badge disc painted in the background colour. */
 function withoutDisc(src, line) {
   const c = cloneCanvas(src);
@@ -591,15 +600,15 @@ async function convertLines(lines) {
     // A date with a weekday badge beside it is measured with the badge's disc
     // painted out, so the disc doesn't count as part of its letters.
     const src = l.disc ? withoutDisc(state.original, l) : state.original;
-    const bbox = inkBounds(src, l.bbox, { vertical: l.vertical });
+    const han = [...l.text].filter((ch) => /\p{Script=Han}/u.test(ch)).length;
+    const bbox = inkBounds(src, l.bbox, { vertical: l.vertical, color: l.badge ? hexOf(l.badge.ink) : null, cjk: han >= 0.5 * [...l.text.replace(/\s/g, '')].length });
     return { ...l, src, bbox, mask: l.vertical ? null : letterMask(src, bbox) };
   });
   // Every candidate font needs these characters loaded before comparing shapes.
   const allText = fitted.map((l) => l.text).join('');
   await Promise.all(MATCH_FAMILIES.map(loadFontCss));
   await Promise.allSettled(MATCH_FAMILIES.flatMap((f) => weightsOf(f).map((w) => document.fonts.load(`${w} 40px "${f}"`, allText))));
-  const hex = (rgb) => `#${rgb.map((v) => v.toString(16).padStart(2, '0')).join('')}`;
-  const built = fitted.map((l) => textFromLine(l, l.badge ? hex(l.badge.ink) : textColorByContrast(l.src, l.bbox, l.vertical)));
+  const built = fitted.map((l) => textFromLine(l, l.badge ? hexOf(l.badge.ink) : textColorByContrast(l.src, l.bbox, l.vertical)));
   await ensureFontsLoaded(built.map((b) => b.obj));
   built.forEach((b) => b.fit(b.obj));
   built.forEach((b, i) => {
@@ -622,7 +631,7 @@ async function convertLines(lines) {
     g.restore();
   }
   for (const l of lines.filter((x) => x.badge)) {
-    g.fillStyle = hex(l.badge.color);
+    g.fillStyle = hexOf(l.badge.color);
     g.beginPath();
     g.arc(l.badge.cx, l.badge.cy, l.badge.r * 0.92, 0, 2 * Math.PI);
     g.fill();
@@ -630,27 +639,21 @@ async function convertLines(lines) {
   return built.map((b) => b.obj);
 }
 
-// Text inside a drawing (signs, banners, a paper someone holds) is usually
-// surrounded by a busy background. This is only a suggestion: on the benchmark
-// about 8% of ordinary poster lines next to artwork score as high, so the user
-// confirms each one, and any converted line can be put back as picture later.
-const PICTURE_TEXT = 0.7;
-
 /**
- * Text drawn into the artwork: either its surroundings are busy (a banner in
- * a crowd), or it sits on a small plain patch (a sheet of paper someone holds,
- * a sign) whose colour differs from the busy drawing around it. On the
- * benchmark the patch test adds about 2–3% false suggestions; the user
- * confirms each one.
+ * Text drawn into the artwork (a sign, a banner, a sheet of paper someone
+ * holds) sits on a small plain patch: the colour around it doesn't run on
+ * into the poster's background, and it clearly differs from what lies around
+ * the text or around the patch. On 40 benchmark posters 2.1% of ordinary
+ * lines look like this (each is still asked about); all three picture items
+ * on the reference poster do.
  */
 function looksLikePictureText(ib) {
   const h = Math.min(ib.y1 - ib.y0, ib.x1 - ib.x0);
-  const pad = (k) => ({ x0: ib.x0 - k * h, y0: ib.y0 - k * h, x1: ib.x1 + k * h, y1: ib.y1 + k * h });
-  if (backgroundBusyness(state.original, pad(0.15)) >= PICTURE_TEXT) return true;
   const near = sampleRing(state.original, ib, 0.3 * h);
   const far = sampleRing(state.original, ib, 1.5 * h);
   const offset = Math.abs(near[0] - far[0]) + Math.abs(near[1] - far[1]) + Math.abs(near[2] - far[2]);
-  return offset >= 150 && backgroundBusyness(state.original, pad(1.2)) >= 0.5;
+  const patch = plainPatch(state.original, ib);
+  return patch.bounded && patch.ratio < 3 && Math.max(offset, patch.offset) >= 200;
 }
 
 /**

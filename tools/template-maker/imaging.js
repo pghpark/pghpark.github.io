@@ -206,47 +206,33 @@ export function eraseText(canvas, box, pad = 3) {
 }
 
 /**
- * How busy the background right around a text box is (0 = flat colour).
- * Text printed on a plain area scores low; text inside a drawing (a sign, a
- * banner, a paper someone holds) is surrounded by outlines and colour changes.
- * Measured on a ring around the box: the share of pixels far from its median colour.
- */
-export function backgroundBusyness(canvas, box) {
-  const h = box.y1 - box.y0;
-  const pad = Math.max(3, Math.round(h * 0.35));
-  const ring = Math.max(3, Math.round(h * 0.25));
-  const r = clampRect(canvas, box.x0 - pad - ring, box.y0 - pad - ring, box.x1 + pad + ring, box.y1 + pad + ring);
-  const inner = { x0: box.x0 - pad, y0: box.y0 - pad, x1: box.x1 + pad, y1: box.y1 + pad };
-  const w = r.x1 - r.x0; const hh = r.y1 - r.y0;
-  if (w <= 0 || hh <= 0) return 0;
-  const { data } = canvas.getContext('2d', { willReadFrequently: true }).getImageData(r.x0, r.y0, w, hh);
-  const px = [];
-  for (let y = 0; y < hh; y++) for (let x = 0; x < w; x++) {
-    const ax = r.x0 + x; const ay = r.y0 + y;
-    if (ax >= inner.x0 && ax < inner.x1 && ay >= inner.y0 && ay < inner.y1) continue;
-    const i = (y * w + x) * 4; px.push([data[i], data[i + 1], data[i + 2]]);
-  }
-  if (!px.length) return 0;
-  const med = [0, 1, 2].map((k) => median(px.map((p) => p[k])));
-  return px.filter((p) => Math.abs(p[0] - med[0]) + Math.abs(p[1] - med[1]) + Math.abs(p[2] - med[2]) > 90).length / px.length;
-}
-
-/**
  * Tight box around the letter pixels inside a (padded) text box, so new text
  * can be sized to the original letters rather than to the OCR box around them.
  * Pixels closer to the text colour than to the background count as ink; rows
  * and columns with only a few ink pixels (specks, artwork edges) are trimmed.
  * Returns the input box if the text doesn't stand out from its background.
  * For a vertical line the same is done with rows and columns swapped.
+ * `color` (#rrggbb) gives the text colour when it is already known; `cjk`
+ * says the line is mostly Chinese characters.
  */
-export function inkBounds(canvas, box, { vertical = false } = {}) {
+export function inkBounds(canvas, box, { vertical = false, color = null, cjk = true } = {}) {
   const r = clampRect(canvas, box.x0, box.y0, box.x1, box.y1);
   const w = r.x1 - r.x0;
   const h = r.y1 - r.y0;
   if (w < 3 || h < 3) return box;
-  const bg = sampleRing(canvas, box, 1);
   const { data } = canvas.getContext('2d', { willReadFrequently: true }).getImageData(r.x0, r.y0, w, h);
   const d = (i, c) => Math.abs(data[i] - c[0]) + Math.abs(data[i + 1] - c[1]) + Math.abs(data[i + 2] - c[2]);
+  // Background: either just outside the box, or its own edge (a detection box
+  // is padded, so its edge is background too). Text often sits on a panel of
+  // its own colour, where the outside is something else; take whichever colour
+  // covers more of the box.
+  const frame = [];
+  for (let x = 0; x < w; x++) for (const y of [0, 1, h - 2, h - 1]) frame.push((y * w + x) * 4);
+  for (let y = 2; y < h - 2; y++) for (const x of [0, 1, w - 2, w - 1]) frame.push((y * w + x) * 4);
+  const med = (k) => { const v = frame.map((i) => data[i + k]).sort((a, b) => a - b); return v[v.length >> 1]; };
+  const candidates = [sampleRing(canvas, box, 1), [med(0), med(1), med(2)]];
+  const cover = (c) => { let n = 0; for (let i = 0; i < data.length; i += 16) if (d(i, c) <= 40) n++; return n; };
+  const bg = cover(candidates[1]) > cover(candidates[0]) ? candidates[1] : candidates[0];
   // "across" runs over the line's thickness (rows of a horizontal line,
   // columns of a vertical one); "along" runs along its letters.
   const A = vertical ? w : h;
@@ -261,13 +247,23 @@ export function inkBounds(canvas, box, { vertical = false } = {}) {
   band.sort((p, q) => q[0] - p[0]);
   const top = band.slice(0, Math.max(1, Math.floor(band.length * 0.08)));
   if (!top.length || top[0][0] < 60) return box;
-  const fg = [0, 1, 2].map((k) => top.reduce((s, [, i]) => s + data[i + k], 0) / top.length);
-  // A pixel is ink if it is nearer this line's colour than the background's.
-  const isInk = (i) => d(i, fg) < d(i, bg) && d(i, bg) > 40;
+  // The line's colour: the colour inside the box that stops at its ends, so
+  // artwork behind or around the text (which carries on) isn't taken for it.
+  const hex = color || textColorByContrast(canvas, box, vertical);
+  const fg = [1, 3, 5].map((k) => parseInt(hex.slice(k, k + 2), 16));
+  // A pixel is ink if it is close to the line's colour (and nearer it than the
+  // background's): over a drawing, being "unlike the background" isn't enough.
+  const near = Math.max(50, Math.min(120, 0.4 * (Math.abs(fg[0] - bg[0]) + Math.abs(fg[1] - bg[1]) + Math.abs(fg[2] - bg[2]))));
+  const isInk = (i) => d(i, fg) < near && d(i, fg) < d(i, bg) && d(i, bg) > 40;
   const across = new Uint32Array(A);
   const along = new Uint32Array(B);
+  // Columns that are ink nearly all the way across the box, touching both of
+  // its (padded) edges, are a bar, tag or frame beside the text, not letters:
+  // leave them out of the row counts.
+  const solid = new Uint8Array(B);
+  for (let b = 0; b < B; b++) { let n = 0; for (let a = 0; a < A; a++) if (isInk(at(a, b))) n++; solid[b] = n >= 0.8 * A && isInk(at(0, b)) && isInk(at(A - 1, b)) ? 1 : 0; }
   for (let a = 0; a < A; a++) {
-    for (let b = 0; b < B; b++) if (isInk(at(a, b))) across[a]++;
+    for (let b = 0; b < B; b++) if (!solid[b] && isInk(at(a, b))) across[a]++;
   }
   // Grow from the middle outwards; stop at the first (nearly) empty row or
   // column, which separates this line from its neighbours.
@@ -281,9 +277,38 @@ export function inkBounds(canvas, box, { vertical = false } = {}) {
   if (across[mid] <= empty) { // the middle is a gap (e.g. between two strokes): fall back to everything
     a0 = across.findIndex((v) => v > empty); a1 = A - 1 - [...across].reverse().findIndex((v) => v > empty);
   }
+  // Hit (nearly) the whole box: neighbouring lines or artwork in the padding
+  // kept every row "non-empty". Look for the dips between this line and them:
+  // rows well below the line's typical density, a few in a row. Only for
+  // Chinese text: its characters have dense, flat tops and bottoms, whereas
+  // digits and Latin letters taper (a dip there is the end of a letter).
+  if (cjk && a1 - a0 + 1 >= 0.75 * A) {
+    const core = Array.from(across.slice(Math.floor(A * 0.35), Math.ceil(A * 0.65))).sort((p, q) => p - q);
+    const typical = core[core.length >> 1] || 0;
+    const low = (k) => across[k] < 0.25 * typical;
+    const dip = (k, dir) => { for (let j = 0; j < 2; j++) { const q = k + dir * j; if (q < 0 || q >= A || !low(q)) return false; } return true; };
+    let b0 = mid; let b1 = mid;
+    while (b0 > 0 && !dip(b0 - 1, -1)) b0--;
+    while (b1 < A - 1 && !dip(b1 + 1, 1)) b1++;
+    if (typical > 0 && b1 - b0 + 1 >= 0.25 * A) { a0 = Math.max(a0, b0); a1 = Math.min(a1, b1); }
+  }
+  // The strict ink test stops at the stroke centres; the font sizing compares
+  // with full glyph outlines. Take back the blurred edge row on each side.
+  {
+    const loose = (a) => { let n = 0; for (let b = 0; b < B; b++) { const i = at(a, b); if (!solid[b] && d(i, fg) < d(i, bg) && d(i, bg) > 40) n++; } return n; };
+    if (a0 > 0 && loose(a0 - 1) > empty) a0--;
+    if (a1 < A - 1 && loose(a1 + 1) > empty) a1++;
+  }
   let ink = 0;
   for (let a = a0; a <= a1; a++) {
-    for (let b = 0; b < B; b++) if (isInk(at(a, b))) { along[b]++; ink++; }
+    for (let b = 0; b < B; b++) {
+      if (solid[b]) continue;
+      const i = at(a, b);
+      if (isInk(i)) along[b]++;
+      // Stroke coverage (for bold or regular) counts blurred stroke edges too,
+      // as the rendered fonts it is compared with do.
+      if (d(i, fg) < d(i, bg) && d(i, bg) > 40) ink++;
+    }
   }
   const minB = Math.max(1, Math.max(...along) * 0.04);
   let b0 = 0; while (b0 < B && along[b0] < minB) b0++;
@@ -294,6 +319,49 @@ export function inkBounds(canvas, box, { vertical = false } = {}) {
   tight.density = ink / Math.max(1, (tight.x1 - tight.x0) * (tight.y1 - tight.y0));
   if ((tight.x1 - tight.x0) < (box.x1 - box.x0) * 0.3 || (tight.y1 - tight.y0) < (box.y1 - box.y0) * 0.3) return box;
   return tight;
+}
+
+/**
+ * How far the plain colour just around a line of text extends. Flood-fills
+ * that colour (seeded on a ring 0.3 line-heights out) within a window of six
+ * line heights. Returns {bounded, ratio, offset}: bounded if the fill never
+ * reaches the window's edge (a sign, a banner, a sheet of paper); the filled
+ * area as a multiple of the text's own box; and how different the patch's
+ * colour is from what lies just outside it.
+ */
+export function plainPatch(canvas, ink) {
+  const W = canvas.width; const H = canvas.height;
+  const h = Math.max(4, Math.min(ink.y1 - ink.y0, ink.x1 - ink.x0));
+  const near = sampleRing(canvas, ink, 0.3 * h);
+  const R = 6 * h;
+  const wx0 = Math.max(0, Math.floor(ink.x0 - R)); const wy0 = Math.max(0, Math.floor(ink.y0 - R));
+  const ww = Math.min(W, Math.ceil(ink.x1 + R)) - wx0; const wh = Math.min(H, Math.ceil(ink.y1 + R)) - wy0;
+  if (ww < 3 || wh < 3) return { bounded: false, ratio: Infinity };
+  const { data } = canvas.getContext('2d', { willReadFrequently: true }).getImageData(wx0, wy0, ww, wh);
+  const plain = (k) => Math.abs(data[k * 4] - near[0]) + Math.abs(data[k * 4 + 1] - near[1]) + Math.abs(data[k * 4 + 2] - near[2]) < 45;
+  const seen = new Uint8Array(ww * wh); const stack = [];
+  const seed = (x, y) => { const k = (y - wy0) * ww + (x - wx0); if (k >= 0 && k < ww * wh && !seen[k] && plain(k)) { seen[k] = 1; stack.push(k); } };
+  const rx0 = Math.max(wx0, Math.floor(ink.x0 - 0.3 * h)); const ry0 = Math.max(wy0, Math.floor(ink.y0 - 0.3 * h));
+  const rx1 = Math.min(wx0 + ww - 1, Math.ceil(ink.x1 + 0.3 * h)); const ry1 = Math.min(wy0 + wh - 1, Math.ceil(ink.y1 + 0.3 * h));
+  for (let x = rx0; x <= rx1; x++) { seed(x, ry0); seed(x, ry1); }
+  for (let y = ry0; y <= ry1; y++) { seed(rx0, y); seed(rx1, y); }
+  let area = 0; let bounded = true;
+  let fx0 = ink.x0; let fy0 = ink.y0; let fx1 = ink.x1; let fy1 = ink.y1;
+  while (stack.length) {
+    const k = stack.pop(); area++;
+    const x = k % ww; const y = (k - x) / ww;
+    if (wx0 + x < fx0) fx0 = wx0 + x; if (wx0 + x + 1 > fx1) fx1 = wx0 + x + 1;
+    if (wy0 + y < fy0) fy0 = wy0 + y; if (wy0 + y + 1 > fy1) fy1 = wy0 + y + 1;
+    if (x === 0 || y === 0 || x === ww - 1 || y === wh - 1) bounded = false;
+    if (x > 0 && !seen[k - 1] && plain(k - 1)) { seen[k - 1] = 1; stack.push(k - 1); }
+    if (x < ww - 1 && !seen[k + 1] && plain(k + 1)) { seen[k + 1] = 1; stack.push(k + 1); }
+    if (y > 0 && !seen[k - ww] && plain(k - ww)) { seen[k - ww] = 1; stack.push(k - ww); }
+    if (y < wh - 1 && !seen[k + ww] && plain(k + ww)) { seen[k + ww] = 1; stack.push(k + ww); }
+  }
+  // Colour just outside the patch, to compare the patch with its surroundings.
+  const outside = sampleRing(canvas, { x0: fx0, y0: fy0, x1: fx1, y1: fy1 }, 2);
+  const offset = Math.abs(near[0] - outside[0]) + Math.abs(near[1] - outside[1]) + Math.abs(near[2] - outside[2]);
+  return { bounded, ratio: area / Math.max(1, (ink.x1 - ink.x0) * (ink.y1 - ink.y0)), offset };
 }
 
 /**
@@ -368,9 +436,18 @@ export function textColorByContrast(canvas, box, vertical = false) {
     : [...read(r.x0 - 1.2 * t, r.y0, r.x0 - 0.2 * t, r.y1), ...read(r.x1 + 0.2 * t, r.y0, r.x1 + 1.2 * t, r.y1)];
   if (ends.length < 20) return estimateTextColor(canvas, box);
   const dist = (a, b) => Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]);
-  // k-means (k = 4) on the inside colours, started from spread-out samples.
+  // k-means (k = 6) on the inside colours.
   const sorted = [...inside].sort((a, b) => (a[0] + a[1] + a[2]) - (b[0] + b[1] + b[2]));
-  let centres = [0.05, 0.35, 0.65, 0.95].map((f) => sorted[Math.floor(f * (sorted.length - 1))]);
+  // Seeds: the median colour, then repeatedly the colour farthest from all
+  // seeds so far, so similar-brightness colours (yellow text on tan) separate.
+  let centres = [sorted[sorted.length >> 1]];
+  const sample = inside.filter((_, i) => i % 3 === 0);
+  while (centres.length < 6) {
+    let far = null; let farD = -1;
+    for (const p of sample) { const dd = Math.min(...centres.map((c) => dist(p, c))); if (dd > farD) { farD = dd; far = p; } }
+    if (!far || farD < 30) break;
+    centres.push(far);
+  }
   for (let it = 0; it < 6; it++) {
     const sums = centres.map(() => [0, 0, 0, 0]);
     for (const p of inside) {
@@ -384,14 +461,28 @@ export function textColorByContrast(canvas, box, vertical = false) {
   const around = [0, 1, 2].map((k) => med(ends, k));
   // Of the colours that stop at the line's ends, the one most unlike the
   // surroundings is the solid stroke colour (the others are blends at its edges).
-  let pick = null; let pickScore = 0;
+  // Letter strokes are thin: most of their pixels lie on an edge. A panel or
+  // patch behind the text is solid. Share of a colour's pixels on its edge:
+  const edgeShare = (c) => {
+    let n = 0; let edge = 0;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      if (dist(inside[y * w + x], c) >= T) continue;
+      n++;
+      const out = (xx, yy) => xx < 0 || yy < 0 || xx >= w || yy >= h || dist(inside[yy * w + xx], c) >= T;
+      if (out(x - 1, y) || out(x + 1, y) || out(x, y - 1) || out(x, y + 1)) edge++;
+    }
+    return n ? edge / n : 0;
+  };
+  let pick = null; let pickScore = 0; let fallback = null; let fallbackScore = 0;
   for (const c of centres) {
     const sIn = inside.filter((p) => dist(p, c) < T).length / inside.length;
     const sOut = ends.filter((p) => dist(p, c) < T).length / ends.length;
     if (sIn < 0.04 || sOut > 0.5 * sIn) continue;
     const score = dist(c, around);
-    if (score > pickScore) { pickScore = score; pick = c; }
+    if (score > fallbackScore) { fallbackScore = score; fallback = c; }
+    if (edgeShare(c) >= Math.min(0.35, 6 / t) && score > pickScore) { pickScore = score; pick = c; } // thicker strokes in bigger text
   }
+  pick ||= fallback;
   if (!pick) return estimateTextColor(canvas, box);
   // Refine: the stroke cores, i.e. the members of that cluster least like the
   // surroundings (edge pixels are blends).
