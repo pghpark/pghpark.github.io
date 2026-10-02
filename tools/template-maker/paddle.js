@@ -1,16 +1,23 @@
-// Text detection + recognition with PaddleOCR PP-OCRv5 (Apache-2.0), run in
-// the browser with ONNX Runtime Web. PP-OCRv5's Chinese model reads Simplified
-// and Traditional Chinese, English and Japanese; its dictionary has 18,384
+// Text detection + recognition with PaddleOCR PP-OCRv6 (Apache-2.0), run in
+// the browser with ONNX Runtime Web. The Chinese model reads Simplified and
+// Traditional Chinese, English and Japanese; its dictionary has 18,709
 // characters. Unlike Tesseract it first *finds* every text region (any layout,
 // any style), then reads each one, so every visible piece of text gets a box.
-//
-// Models: the official PP-OCRv5 mobile exports, redistributed unmodified on npm
-// (pdfmarkdown-ppocrv5-models) so jsDelivr can serve them to browsers.
 
-const MODELS = 'https://cdn.jsdelivr.net/npm/pdfmarkdown-ppocrv5-models@1.0.0';
+// PP-OCRv6 Small (Apache-2.0): on 20 benchmark posters it read 77.1% of
+// characters and 56.2% of lines exactly, against 72.1% and 43.1% for
+// PP-OCRv5 mobile, at a similar download (det 9.9 MB + rec 21 MB). The files
+// are the official ONNX exports, from a pinned npm package so jsDelivr serves them.
+const V6 = 'https://cdn.jsdelivr.net/npm/@arcships/light-ocr-model-ppocrv6-small@0.3.4/bundle';
+const V5 = 'https://cdn.jsdelivr.net/npm/pdfmarkdown-ppocrv5-models@1.0.0';
+// Tried in order; PP-OCRv5 mobile is the fallback if PP-OCRv6 can't be downloaded.
+const MODELS = [
+  { det: `${V6}/det/inference.onnx`, rec: `${V6}/rec/inference.onnx`, dict: `${V6}/rec/dictionary.json` },
+  { det: `${V5}/detection/PP-OCRv5_mobile_det_infer.ort`, rec: `${V5}/recognition/PP-OCRv5_mobile_rec_infer.onnx`, dict: `${V5}/recognition/ppocrv5_dict.txt` },
+];
 const ORT_WASM = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/';
 
-// PaddleOCR defaults (PaddleX PP-OCRv5 inference.yml).
+// PaddleOCR's DB defaults, except unclip (2.0 keeps the edge characters).
 const DET = { limitSide: 960, maxSide: 2400, fineSide: 1920, smallText: 48, thresh: 0.3, boxThresh: 0.6, unclip: 2.0, mean: [0.485, 0.456, 0.406], std: [0.229, 0.224, 0.225] };
 const REC_HEIGHT = 48;
 
@@ -35,7 +42,7 @@ async function load(report) {
     ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 1) : 1;
     const fetchBytes = async (path, label) => {
       report?.({ status: label, progress: 0 });
-      const res = await fetch(`${MODELS}/${path}`);
+      const res = await fetch(path);
       if (!res.ok) throw new Error(`Model download failed (${res.status})`);
       const total = Number(res.headers.get('content-length')) || 0;
       const reader = res.body.getReader();
@@ -53,16 +60,29 @@ async function load(report) {
       for (const c of chunks) { out.set(c, o); o += c.length; }
       return out;
     };
-    const [detBytes, recBytes, dictText] = await Promise.all([
-      fetchBytes('detection/PP-OCRv5_mobile_det_infer.ort', 'loading text finder'),
-      fetchBytes('recognition/PP-OCRv5_mobile_rec_infer.onnx', 'loading text reader'),
-      fetch(`${MODELS}/recognition/ppocrv5_dict.txt`).then((r) => r.text()),
-    ]);
     const opts = { executionProviders: ['wasm'], graphOptimizationLevel: 'all' };
-    const [det, rec] = await Promise.all([ort.InferenceSession.create(detBytes, opts), ort.InferenceSession.create(recBytes, opts)]);
-    // CTC: index 0 is "blank", then the dictionary (one character per line; this
-    // export has a stray empty line that is not a class), then a space.
-    const chars = ['', ...dictText.split('\n').map((l) => l.replace(/\r$/, '')).filter((l) => l !== ''), ' '];
+    let det; let rec; let entries; let lastError;
+    for (const model of MODELS) {
+      try {
+        const [detBytes, recBytes, dictText] = await Promise.all([
+          fetchBytes(model.det, 'loading text finder'),
+          fetchBytes(model.rec, 'loading text reader'),
+          fetch(model.dict).then((r) => { if (!r.ok) throw new Error(`Model download failed (${r.status})`); return r.text(); }),
+        ]);
+        [det, rec] = await Promise.all([ort.InferenceSession.create(detBytes, opts), ort.InferenceSession.create(recBytes, opts)]);
+        // CTC: index 0 is "blank", then the dictionary, then a space. A .json
+        // dictionary is {"characters": [...]}; a .txt one has one character per
+        // line (the v5 export also has a stray empty line that is not a class).
+        entries = model.dict.endsWith('.json')
+          ? JSON.parse(dictText).characters
+          : dictText.split('\n').map((l) => l.replace(/\r$/, '')).filter((l) => l !== '');
+        break;
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    if (!entries) throw lastError;
+    const chars = ['', ...entries, ' '];
     if (!self.OpenCC) await loadScript(OPENCC_JS).catch(() => {});
     const cn2tw = self.OpenCC ? OpenCC.Converter({ from: 'cn', to: 'tw' }) : (t) => t;
     return { det, rec, chars, cn2tw };
@@ -145,8 +165,12 @@ async function detect(session, source, side) {
   return boxes;
 }
 
-/** Text recognition (CTC) of one box. Tall boxes are vertical text: rotated 90° first, as PaddleOCR does. */
-async function recognize(session, chars, source, box) {
+/**
+ * Text recognition (CTC) of one box. Tall boxes are vertical text: rotated 90°
+ * first, as PaddleOCR does. With `among` (a string of characters), reads a
+ * single character known to be one of those: the one the model scores highest.
+ */
+async function recognize(session, chars, source, box, among = null) {
   const bw = box.x1 - box.x0; const bh = box.y1 - box.y0;
   const vertical = bh >= 1.5 * bw;
   const cw = vertical ? bh : bw; const ch = vertical ? bw : bh;
@@ -167,6 +191,15 @@ async function recognize(session, chars, source, box) {
   const out = await session.run({ [session.inputNames[0]]: input });
   const t = out[session.outputNames[0]];
   const [, steps, classes] = t.dims;
+  if (among) {
+    let bestCh = ''; let bestP = 0;
+    for (const chr of among) {
+      const k = chars.indexOf(chr);
+      if (k < 0) continue;
+      for (let i = 0; i < steps; i++) if (t.data[i * classes + k] > bestP) { bestP = t.data[i * classes + k]; bestCh = chr; }
+    }
+    return { text: bestCh, confidence: bestP * 100, vertical };
+  }
   let text = ''; let prev = -1; let scoreSum = 0; let count = 0;
   for (let i = 0; i < steps; i++) {
     let best = 0; let bestP = -Infinity;
@@ -210,7 +243,8 @@ export async function paddleDetect(source, { onProgress } = {}) {
     }
     read.push(lines);
   }
-  return dropRepeats(mergePieces(read.length > 1 ? combinePasses(read[0], read[1]) : read[0]));
+  const lines = dropRepeats(stackColumns(mergePieces(read.length > 1 ? combinePasses(read[0], read[1]) : read[0])));
+  return restoreDateSlashes(source, await readBadges(source, lines, (canvas, box, among) => recognize(rec, chars, canvas, box, among)));
 }
 
 /**
@@ -229,12 +263,247 @@ function combinePasses(base, fine) {
     if (thick(f) >= DET.smallText) continue;
     const hits = out.filter((b) => overlap(b.bbox, f.bbox) >= 0.5 * Math.min(area(b.bbox), area(f.bbox)));
     if (!hits.length) { out.push(f); continue; }
-    if (hits.some((b) => thick(b) >= DET.smallText)) continue;
-    const hitLen = hits.reduce((n, b) => n + len(b), 0);
-    const better = len(f) > hitLen || (len(f) === hitLen && hits.length === 1 && f.confidence > hits[0].confidence);
-    if (better) { for (const b of hits) out.splice(out.indexOf(b), 1); out.push(f); }
+    // Overlapping big lettering: usually a piece of it (skip), but a small mark
+    // set beside it (第 next to 歷史) reads characters the big line doesn't have.
+    const big = hits.filter((b) => thick(b) >= DET.smallText);
+    if (big.length) {
+      const own = [...f.text.replace(/\s/g, '')].filter((ch) => !big.some((b) => b.text.includes(ch)));
+      if (own.length < len(f) || area(f.bbox) >= 0.15 * Math.min(...big.map((b) => area(b.bbox)))) continue;
+    }
+    const small = hits.filter((b) => !big.includes(b));
+    if (!small.length) { out.push(f); continue; }
+    const hitLen = small.reduce((n, b) => n + len(b), 0);
+    const better = len(f) > hitLen || (len(f) === hitLen && small.length === 1 && f.confidence > small[0].confidence);
+    if (better) { for (const b of small) out.splice(out.indexOf(b), 1); out.push(f); }
   }
   return out;
+}
+
+/**
+ * Stylised dates often use a thin, long slash (01/15) that the reader drops,
+ * giving "0115". For a line read as four digits that make a valid month and
+ * day, count the separate marks across its letters: five marks, the middle
+ * one leaning like "/", means the slash is there.
+ */
+function restoreDateSlashes(source, lines) {
+  const ctx = source.getContext('2d', { willReadFrequently: true });
+  return lines.map((l) => {
+    const m = !l.vertical && l.text.trim().match(/^(\d{2})(\d{2})$/);
+    if (!m || +m[1] < 1 || +m[1] > 12 || +m[2] < 1 || +m[2] > 31) return l;
+    const x0 = Math.max(0, Math.floor(l.bbox.x0)); const y0 = Math.max(0, Math.floor(l.bbox.y0));
+    const w = Math.min(source.width, Math.ceil(l.bbox.x1)) - x0; const h = Math.min(source.height, Math.ceil(l.bbox.y1)) - y0;
+    if (w < 10 || h < 6) return l;
+    const { data } = ctx.getImageData(x0, y0, w, h);
+    const px = (i) => [data[i * 4], data[i * 4 + 1], data[i * 4 + 2]];
+    const border = [];
+    for (let x = 0; x < w; x++) border.push(px(x), px((h - 1) * w + x));
+    const bg = [0, 1, 2].map((k) => { const v = border.map((c) => c[k]).sort((a, b) => a - b); return v[v.length >> 1]; });
+    const d = l.disc; // a weekday badge's disc isn't one of the date's marks
+    const ink = (x, y) => {
+      if (d && Math.hypot(x0 + x - d.cx, y0 + y - d.cy) < d.r * 1.08) return false;
+      const c = px(y * w + x); return Math.abs(c[0] - bg[0]) + Math.abs(c[1] - bg[1]) + Math.abs(c[2] - bg[2]) > 120;
+    };
+    // Separate marks: connected ink shapes of a good part of the digits' height.
+    const seen = new Uint8Array(w * h); const shapes = [];
+    for (let k = 0; k < w * h; k++) {
+      if (seen[k] || !ink(k % w, (k - (k % w)) / w)) continue;
+      const stack = [k]; seen[k] = 1; const pts = [];
+      while (stack.length) {
+        const q = stack.pop(); const x = q % w; const y = (q - x) / w; pts.push([x, y]);
+        for (const [nx, ny] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]]) {
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          const j = ny * w + nx;
+          if (!seen[j] && ink(nx, ny)) { seen[j] = 1; stack.push(j); }
+        }
+      }
+      const ys = pts.map((p) => p[1]);
+      shapes.push({ pts, top: Math.min(...ys), bottom: Math.max(...ys), cx: pts.reduce((n, p) => n + p[0], 0) / pts.length });
+    }
+    // Typical digit height: the median height of the large shapes.
+    const most = Math.max(0, ...shapes.map((sh) => sh.pts.length));
+    const heights = shapes.filter((sh) => sh.pts.length >= 0.3 * most).map((sh) => sh.bottom - sh.top).sort((p, q) => p - q);
+    const digitH = heights[heights.length >> 1] || 0;
+    const marks = shapes.filter((sh) => sh.bottom - sh.top >= 0.4 * digitH && sh.pts.length >= 8).sort((p, q) => p.cx - q.cx);
+    if (marks.length !== 5) return l;
+    // The middle mark should lean like "/": further right at its top than at its bottom.
+    const sl = marks[2]; const mid = (sl.top + sl.bottom) / 2;
+    const upper = sl.pts.filter((p) => p[1] < mid); const lower = sl.pts.filter((p) => p[1] >= mid);
+    const width = Math.max(...sl.pts.map((p) => p[0])) - Math.min(...sl.pts.map((p) => p[0])) + 1;
+    if (!upper.length || !lower.length) return l;
+    const lean = upper.reduce((n, p) => n + p[0], 0) / upper.length - lower.reduce((n, p) => n + p[0], 0) / lower.length;
+    if (lean < 0.25 * width) return l;
+    return { ...l, text: `${m[1]}/${m[2]}` };
+  });
+}
+
+/**
+ * Weekdays on posters are often a character in a filled circle (01/15 ㊁).
+ * The reader sees the circle as a letter ("0115e") or skips it, and erasing
+ * the date would wipe the circle out. Look beside each date-like line for a
+ * filled disc of the line's colour; read the character inside it on its own
+ * (flipped to dark-on-light), and re-read the date without the disc. The disc
+ * itself stays in the picture; only the character becomes editable text.
+ */
+const WEEKDAYS = '一二三四五六日天';
+async function readBadges(source, lines, read) {
+  const W = source.width; const H = source.height;
+  const ctx = source.getContext('2d', { willReadFrequently: true });
+  const out = [...lines];
+  for (const line of lines) {
+    // Dates only (01/15, 0115, 8月10日), allowing a stray letter or two where the badge was misread.
+    if (line.vertical || !/^\d{1,2}\s*[/.\-月]?\s*\d{1,2}\s*日?\s*[A-Za-z()（）○◯]{0,2}$/.test(line.text.trim()) || (line.text.match(/\d/g) || []).length < 3) continue;
+    const b = line.bbox; const h = b.y1 - b.y0;
+    const rx0 = Math.max(0, Math.floor(b.x0)); const rx1 = Math.min(W, Math.ceil(b.x1 + 1.5 * h));
+    const ry0 = Math.max(0, Math.floor(b.y0 - 0.3 * h)); const ry1 = Math.min(H, Math.ceil(b.y1 + 0.3 * h));
+    const rw = rx1 - rx0; const rh = ry1 - ry0;
+    if (rw < 8 || rh < 8) continue;
+    const { data } = ctx.getImageData(rx0, ry0, rw, rh);
+    const disc = findDisc(data, rw, rh, h);
+    if (!disc) continue;
+    const D = { x0: rx0 + disc.cx - disc.r, y0: ry0 + disc.cy - disc.r, x1: rx0 + disc.cx + disc.r, y1: ry0 + disc.cy + disc.r };
+    // Read the character inside: inner square, character dark on light.
+    const side = 2 * Math.max(4, Math.round(disc.r * 0.7)); // even, so the half offsets are whole pixels
+    const crop = document.createElement('canvas');
+    crop.width = side * 2; crop.height = side * 2;
+    const cc = crop.getContext('2d', { willReadFrequently: true });
+    cc.fillStyle = '#fff';
+    cc.fillRect(0, 0, crop.width, crop.height);
+    cc.drawImage(source, rx0 + disc.cx - side / 2, ry0 + disc.cy - side / 2, side, side, side / 2, side / 2, side, side);
+    const img = cc.getImageData(side / 2, side / 2, side, side);
+    // Inside the circle, pixels closer to the character's colour than to the
+    // disc's are ink; the disc and anything outside the circle are paper.
+    const off = (i) => Math.abs(img.data[i] - disc.color[0]) + Math.abs(img.data[i + 1] - disc.color[1]) + Math.abs(img.data[i + 2] - disc.color[2]);
+    const inside = [];
+    for (let i = 0; i < img.data.length; i += 4) {
+      const x = (i / 4) % side - side / 2 + 0.5; const y = Math.floor(i / 4 / side) - side / 2 + 0.5;
+      if (Math.hypot(x, y) < 0.9 * disc.r) inside.push(i);
+    }
+    const offs = inside.map(off).sort((x, y) => x - y);
+    const cut = Math.max(60, offs[Math.floor(offs.length * 0.95)] / 2); // halfway to the character colour
+    const ink = new Uint8Array(side * side);
+    const inkRGB = [0, 0, 0]; let inkN = 0;
+    for (const i of inside) {
+      ink[i / 4] = off(i) > cut ? 1 : 0;
+      if (off(i) > 1.5 * cut) { inkRGB[0] += img.data[i]; inkRGB[1] += img.data[i + 1]; inkRGB[2] += img.data[i + 2]; inkN++; }
+    }
+    // Majority filter: drops print-texture specks, keeps strokes.
+    for (let k = 0; k < side * side; k++) {
+      const x = k % side; const y = (k - x) / side; let n = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const xx = x + dx; const yy = y + dy;
+        if (xx >= 0 && yy >= 0 && xx < side && yy < side) n += ink[yy * side + xx];
+      }
+      const v = n >= 5 ? 0 : 255;
+      img.data[k * 4] = img.data[k * 4 + 1] = img.data[k * 4 + 2] = v;
+    }
+    cc.putImageData(img, side / 2, side / 2);
+    // Beside a date, a badge is the day of the week.
+    const r = await read(crop, { x0: 0, y0: 0, x1: crop.width, y1: crop.height }, WEEKDAYS);
+    const ch = r.text;
+    if (!ch || r.confidence < 15) continue; // low is fine: a disc beside a date is already strong evidence
+    const inner = { x0: rx0 + disc.cx - side / 2, y0: ry0 + disc.cy - side / 2, x1: rx0 + disc.cx + side / 2, y1: ry0 + disc.cy + side / 2, score: 1 };
+    // Drop readings of the badge itself; re-read the date without it.
+    for (const l of [...out]) {
+      if (l === line || l.vertical) continue;
+      const lb = l.bbox;
+      const ov = Math.max(0, Math.min(lb.x1, D.x1) - Math.max(lb.x0, D.x0)) * Math.max(0, Math.min(lb.y1, D.y1) - Math.max(lb.y0, D.y0));
+      if (ov >= 0.6 * (lb.x1 - lb.x0) * (lb.y1 - lb.y0)) out.splice(out.indexOf(l), 1);
+    }
+    // The date keeps its box, but shouldn't keep what the reader made of the
+    // badge ("0115e", "08/25四"); the editor is told where the disc is, so it
+    // can measure the date's letters without it and leave it unerased.
+    const m = line.text.trim().match(/^(.*?\d{1,2}\s*[/.\-月]?\s*\d{1,2}\s*日?)(.{0,2})$/);
+    out[out.indexOf(line)] = { ...line, text: m ? m[1] : line.text, disc: { cx: rx0 + disc.cx, cy: ry0 + disc.cy, r: disc.r } };
+    // The editor needs the disc (to repaint it under the character) and the
+    // character's own colour (the usual estimate would pick the disc's).
+    const badge = {
+      cx: rx0 + disc.cx, cy: ry0 + disc.cy, r: disc.r, color: disc.color.map(Math.round),
+      ink: inkN ? inkRGB.map((v) => Math.round(v / inkN)) : [255, 255, 255],
+    };
+    out.push({ text: ch, confidence: r.confidence, vertical: false, bbox: inner, detScore: 1, badge });
+  }
+  return out;
+}
+
+/**
+ * The best filled disc in an RGBA patch, found by trying centres and radii:
+ * just inside its edge the disc is solid and one colour; just outside it is
+ * mostly background (a neighbouring digit may touch it). `lineH` bounds the
+ * size. Returns {cx, cy, r, color} in patch pixels, where color is the disc's
+ * own colour, or null.
+ */
+function findDisc(data, w, h, lineH) {
+  const px = (x, y) => { const i = (y * w + x) * 4; return [data[i], data[i + 1], data[i + 2]]; };
+  const dist = (a, c) => Math.abs(a[0] - c[0]) + Math.abs(a[1] - c[1]) + Math.abs(a[2] - c[2]);
+  const median = (arr) => { const v = [...arr].sort((x, y) => x - y); return v[v.length >> 1]; };
+  // Background: median colour of the patch border.
+  const border = [];
+  for (let x = 0; x < w; x++) border.push(px(x, 0), px(x, h - 1));
+  for (let y = 0; y < h; y++) border.push(px(0, y), px(w - 1, y));
+  const bg = [0, 1, 2].map((k) => median(border.map((c) => c[k])));
+  const isBg = (c) => dist(c, bg) <= 80;
+  const steps = 32;
+  const ring = Array.from({ length: steps }, (_, s) => [Math.cos((2 * Math.PI * s) / steps), Math.sin((2 * Math.PI * s) / steps)]);
+  let best = null;
+  const rMin = Math.max(5, 0.15 * lineH); const rMax = 0.8 * lineH;
+  for (let r = rMin; r <= rMax; r += Math.max(1, r * 0.08)) {
+    const step = Math.max(1, Math.round(r / 6));
+    for (let cy = Math.ceil(r * 1.2); cy < h - r * 1.2; cy += step) {
+      for (let cx = Math.ceil(r * 1.2); cx < w - r * 1.2; cx += step) {
+        const rim = [];
+        for (const [dx, dy] of ring) {
+          const c = px(Math.round(cx + 0.85 * r * dx), Math.round(cy + 0.85 * r * dy));
+          if (!isBg(c)) rim.push(c);
+        }
+        if (rim.length < 0.9 * steps) continue;
+        let outside = 0;
+        for (const [dx, dy] of ring) if (isBg(px(Math.round(cx + 1.2 * r * dx), Math.round(cy + 1.2 * r * dy)))) outside++;
+        if (outside < 0.55 * steps) continue;
+        const color = [0, 1, 2].map((k) => median(rim.map((c) => c[k])));
+        if (rim.filter((c) => dist(c, color) < 90).length < 0.85 * steps) continue;
+        const score = outside / steps + rim.length / steps + r / rMax * 0.5;
+        if (!best || score > best.score) best = { cx, cy, r, color, score };
+      }
+    }
+  }
+  return best;
+}
+
+/**
+ * A short vertical label (第④屆) can come back as one box per character.
+ * Single characters stacked in a column, of a similar width and close
+ * together, are joined top to bottom into one vertical line.
+ */
+function stackColumns(lines) {
+  const W = (b) => b.x1 - b.x0;
+  const single = (l) => !l.vertical && /^[\p{L}\p{N}]$/u.test(l.text.trim());
+  const columns = [];
+  for (const l of lines.filter(single).sort((a, b) => a.bbox.y0 - b.bbox.y0)) {
+    const col = columns.find((c) => {
+      const q = c[c.length - 1].bbox; const b = l.bbox;
+      const overlapX = Math.min(q.x1, b.x1) - Math.max(q.x0, b.x0);
+      const w = Math.min(W(q), W(b));
+      const gap = b.y0 - q.y1;
+      return overlapX >= 0.6 * w && Math.max(W(q), W(b)) / w < 1.6 && gap < 0.8 * w && gap > -0.6 * w;
+    });
+    if (col) col.push(l); else columns.push([l]);
+  }
+  const joined = columns.filter((c) => c.length >= 2);
+  const used = new Set(joined.flat());
+  return [
+    ...lines.filter((l) => !used.has(l)),
+    ...joined.map((c) => ({
+      ...c[0],
+      text: c.map((l) => l.text.trim()).join(''),
+      vertical: true,
+      confidence: c.reduce((n, l) => n + l.confidence, 0) / c.length,
+      bbox: {
+        x0: Math.min(...c.map((l) => l.bbox.x0)), y0: c[0].bbox.y0,
+        x1: Math.max(...c.map((l) => l.bbox.x1)), y1: c[c.length - 1].bbox.y1,
+        score: Math.min(...c.map((l) => l.bbox.score)),
+      },
+    })),
+  ];
 }
 
 /**

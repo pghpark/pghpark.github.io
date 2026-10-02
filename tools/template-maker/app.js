@@ -1,7 +1,7 @@
 import { detectText } from './ocr.js';
 import { t, applyI18n, setLang, getLang, LANGS } from './i18n.js';
 import {
-  fileToCanvas, urlToCanvas, cloneCanvas, eraseText, estimateTextColor, canvasToBlob, inkBounds, backgroundBusyness, letterMask, sampleRing,
+  fileToCanvas, urlToCanvas, cloneCanvas, eraseText, canvasToBlob, inkBounds, backgroundBusyness, letterMask, sampleRing, textColorByContrast,
 } from './imaging.js';
 import {
   FONTS, DEFAULT_FAMILY, MATCH_FAMILIES, ensureFontsLoaded, normalizeWeight, weightsOf, isBold, loadFontCss,
@@ -522,9 +522,14 @@ function textFromLine(line, color) {
       // was right more often (79% vs 73% on the benchmark).
       const match = matchFont(line.text, line.mask);
       if (match) o.set({ fontFamily: match.family });
+      const approx = (bh * 100) / Math.max(inkAt100(line.text, o).height, 1);
       if (line.bbox.density && weightsOf(o.fontFamily).length > 1) {
-        const approx = (bh * 100) / Math.max(inkAt100(line.text, o).height, 1);
         o.set({ fontWeight: guessWeight(line.text, o.fontFamily, approx, line.bbox.density) });
+      } else if (line.bbox.density && guessWeight(line.text, DEFAULT_FAMILY, approx, line.bbox.density) >= 900) {
+        // Very heavy strokes, but the closest-shaped font has one regular
+        // weight: the weight matters more to the look, so use the default
+        // family at Black. (Plain bold stays: rounded fonts read as bold.)
+        o.set({ fontFamily: DEFAULT_FAMILY, fontWeight: guessWeight(line.text, DEFAULT_FAMILY, approx, line.bbox.density) });
       } else {
         o.set({ fontWeight: 400 });
       }
@@ -568,17 +573,33 @@ function refitIfAuto(o) {
 }
 
 /** Turn OCR lines into fitted text boxes and erase their originals from the background. */
+/** A copy of the photo with a date's badge disc painted in the background colour. */
+function withoutDisc(src, line) {
+  const c = cloneCanvas(src);
+  const g = c.getContext('2d');
+  const bg = sampleRing(src, line.bbox, 2);
+  g.fillStyle = `rgb(${bg.join(',')})`;
+  g.beginPath();
+  g.arc(line.disc.cx, line.disc.cy, line.disc.r * 1.08, 0, 2 * Math.PI);
+  g.fill();
+  return c;
+}
+
 async function convertLines(lines) {
   // Fit new text to the letters themselves, not to the OCR box around them.
   const fitted = lines.map((l) => {
-    const bbox = inkBounds(state.original, l.bbox, { vertical: l.vertical });
-    return { ...l, bbox, mask: l.vertical ? null : letterMask(state.original, bbox) };
+    // A date with a weekday badge beside it is measured with the badge's disc
+    // painted out, so the disc doesn't count as part of its letters.
+    const src = l.disc ? withoutDisc(state.original, l) : state.original;
+    const bbox = inkBounds(src, l.bbox, { vertical: l.vertical });
+    return { ...l, src, bbox, mask: l.vertical ? null : letterMask(src, bbox) };
   });
   // Every candidate font needs these characters loaded before comparing shapes.
   const allText = fitted.map((l) => l.text).join('');
   await Promise.all(MATCH_FAMILIES.map(loadFontCss));
   await Promise.allSettled(MATCH_FAMILIES.flatMap((f) => weightsOf(f).map((w) => document.fonts.load(`${w} 40px "${f}"`, allText))));
-  const built = fitted.map((l) => textFromLine(l, estimateTextColor(state.original, l.bbox)));
+  const hex = (rgb) => `#${rgb.map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+  const built = fitted.map((l) => textFromLine(l, l.badge ? hex(l.badge.ink) : textColorByContrast(l.src, l.bbox, l.vertical)));
   await ensureFontsLoaded(built.map((b) => b.obj));
   built.forEach((b) => b.fit(b.obj));
   built.forEach((b, i) => {
@@ -586,7 +607,26 @@ async function convertLines(lines) {
     const e = lines[i].bbox;
     b.obj.set('eraseBox', { x0: e.x0, y0: e.y0, x1: e.x1, y1: e.y1 });
   });
-  lines.forEach((l) => eraseText(state.clean, l.bbox, 2));
+  const g = state.clean.getContext('2d');
+  for (const l of lines) if (!l.badge) eraseText(state.clean, l.bbox, 2);
+  // Badge discs are artwork: put back any disc a date's erasing touched, then
+  // repaint the inside of each badge's disc in its own colour, under the character.
+  for (const l of lines) {
+    const d = l.disc || l.badge;
+    if (!d) continue;
+    g.save();
+    g.beginPath();
+    g.arc(d.cx, d.cy, d.r, 0, 2 * Math.PI);
+    g.clip();
+    g.drawImage(state.original, 0, 0);
+    g.restore();
+  }
+  for (const l of lines.filter((x) => x.badge)) {
+    g.fillStyle = hex(l.badge.color);
+    g.beginPath();
+    g.arc(l.badge.cx, l.badge.cy, l.badge.r * 0.92, 0, 2 * Math.PI);
+    g.fill();
+  }
   return built.map((b) => b.obj);
 }
 
@@ -600,7 +640,8 @@ const PICTURE_TEXT = 0.7;
  * Text drawn into the artwork: either its surroundings are busy (a banner in
  * a crowd), or it sits on a small plain patch (a sheet of paper someone holds,
  * a sign) whose colour differs from the busy drawing around it. On the
- * benchmark the patch test adds about 1.6% false suggestions.
+ * benchmark the patch test adds about 2–3% false suggestions; the user
+ * confirms each one.
  */
 function looksLikePictureText(ib) {
   const h = Math.min(ib.y1 - ib.y0, ib.x1 - ib.x0);
@@ -609,7 +650,7 @@ function looksLikePictureText(ib) {
   const near = sampleRing(state.original, ib, 0.3 * h);
   const far = sampleRing(state.original, ib, 1.5 * h);
   const offset = Math.abs(near[0] - far[0]) + Math.abs(near[1] - far[1]) + Math.abs(near[2] - far[2]);
-  return offset >= 150 && backgroundBusyness(state.original, pad(1.2)) >= 0.6;
+  return offset >= 150 && backgroundBusyness(state.original, pad(1.2)) >= 0.5;
 }
 
 /**
@@ -651,9 +692,11 @@ async function runDetect() {
 
     // Readings below 50% confidence are mostly logos and tiny print read as
     // gibberish; leave those areas exactly as in the photo instead.
-    const skipped = lines.filter((l) => l.confidence < 50).length;
-    lines = lines.filter((l) => l.confidence >= 50);
-    pictureLines = lines.filter((l) => looksLikePictureText(inkBounds(state.original, l.bbox, { vertical: l.vertical })));
+    // (A weekday badge is kept: finding a disc beside a date already vouches for it.)
+    const skipped = lines.filter((l) => l.confidence < 50 && !l.badge).length;
+    lines = lines.filter((l) => l.confidence >= 50 || l.badge);
+    // A weekday badge (㊁) sits on its own disc; that isn't artwork text.
+    pictureLines = lines.filter((l) => !l.badge && looksLikePictureText(inkBounds(state.original, l.bbox, { vertical: l.vertical })));
     lines = lines.filter((l) => !pictureLines.includes(l));
 
     state.clean = cloneCanvas(state.original);

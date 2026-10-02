@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&family=Noto+Serif+TC:wght@400;700&family=Huninn&family=Iansui&display=swap">
-  <link rel="stylesheet" href="style.css?v=2026-10-02.8">
+  <link rel="stylesheet" href="style.css?v=2026-10-02.9">
   <!-- Versions are pinned; see README.md before upgrading (Fabric 7 changed text positioning). -->
   <script src="https://cdn.jsdelivr.net/npm/fabric@7.4.0/dist/index.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js"></script>
@@ -20,18 +20,18 @@
        (GitHub Pages lets browsers cache each file for 10 minutes). -->
   <script type="importmap">
     {"imports": {
-      "./app.js": "./app.js?v=2026-10-02.8",
-      "./i18n.js": "./i18n.js?v=2026-10-02.8",
-      "./ocr.js": "./ocr.js?v=2026-10-02.8",
-      "./imaging.js": "./imaging.js?v=2026-10-02.8",
-      "./fonts.js": "./fonts.js?v=2026-10-02.8",
-      "./export.js": "./export.js?v=2026-10-02.8",
-      "./storage.js": "./storage.js?v=2026-10-02.8",
-      "./config.js": "./config.js?v=2026-10-02.8",
-      "./paddle.js": "./paddle.js?v=2026-10-02.8"
+      "./app.js": "./app.js?v=2026-10-02.9",
+      "./i18n.js": "./i18n.js?v=2026-10-02.9",
+      "./ocr.js": "./ocr.js?v=2026-10-02.9",
+      "./imaging.js": "./imaging.js?v=2026-10-02.9",
+      "./fonts.js": "./fonts.js?v=2026-10-02.9",
+      "./export.js": "./export.js?v=2026-10-02.9",
+      "./storage.js": "./storage.js?v=2026-10-02.9",
+      "./config.js": "./config.js?v=2026-10-02.9",
+      "./paddle.js": "./paddle.js?v=2026-10-02.9"
     }}
   </script>
-  <script type="module" src="app.js?v=2026-10-02.8"></script>
+  <script type="module" src="app.js?v=2026-10-02.9"></script>
 </head>
 <body>
   <header class="topbar">
@@ -76,6 +76,19 @@
     </div>
   </header>
 
+  <nav class="toolbar" data-i18n-aria-label="tools" aria-label="Tools">
+    <button data-tip="addText" id="addTextBtn" class="btn" data-needs-doc data-i18n="addText">＋ Text</button>
+    <button data-tip="eraseArea" id="eraseBtn" class="btn" data-needs-doc data-i18n="eraseArea">Erase area</button>
+    <button data-tip="undoErase" id="undoEraseBtn" class="btn" data-i18n="undoErase">↶ Erase</button>
+    <span class="toolbar-sep" aria-hidden="true"></span>
+    <button id="undoBtn" class="btn" data-needs-doc data-i18n="undo" data-i18n-title="undoTitle" title="Undo (Ctrl+Z)">↶ Undo</button>
+    <button data-tip="undoRedo" id="redoBtn" class="btn" data-needs-doc data-i18n="redo">↷ Redo</button>
+    <span class="toolbar-sep" aria-hidden="true"></span>
+    <label data-tip="zoom" class="field inline"><span data-i18n="zoom">Zoom</span>
+      <select id="zoom" data-needs-doc><option value="fit" data-i18n="zoomFit">Fit</option><option value="0.5">50%</option><option value="1">100%</option><option value="2">200%</option></select>
+    </label>
+  </nav>
+
   <main class="workspace">
     <div class="stage-area">
     <section id="stage" class="stage">
@@ -101,21 +114,6 @@
         <div class="with-info wide"><button data-tip="detectAgain" id="detectBtn" class="btn wide" data-i18n="detectAgain">Detect text again</button></div>
       </section>
 
-      <section>
-        <h2 data-i18n="tools">Tools</h2>
-        <div class="row">
-          <span class="with-info"><button data-tip="addText" id="addTextBtn" class="btn" data-needs-doc data-i18n="addText">＋ Text</button></span>
-          <button data-tip="eraseArea" id="eraseBtn" class="btn" data-needs-doc data-i18n="eraseArea">Erase area</button>
-          <button data-tip="undoErase" id="undoEraseBtn" class="btn" data-i18n="undoErase">↶ Erase</button>
-        </div>
-        <div class="row">
-          <button id="undoBtn" class="btn" data-needs-doc data-i18n="undo" data-i18n-title="undoTitle" title="Undo (Ctrl+Z)">↶ Undo</button>
-          <button data-tip="undoRedo" id="redoBtn" class="btn" data-needs-doc data-i18n="redo">↷ Redo</button>
-          <label data-tip="zoom" class="field inline"><span data-i18n="zoom">Zoom</span>
-            <select id="zoom" data-needs-doc><option value="fit" data-i18n="zoomFit">Fit</option><option value="0.5">50%</option><option value="1">100%</option><option value="2">200%</option></select>
-          </label>
-        </div>
-      </section>
 
       <section>
         <h2 data-i18n="selectedText">Selected text</h2>

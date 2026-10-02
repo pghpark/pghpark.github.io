@@ -44,6 +44,8 @@ body {
 
 /* Top bar */
 .topbar {
+  position: relative;
+  z-index: 30; /* its menus open over the sticky toolbar below */
   display: flex;
   align-items: center;
   gap: 12px;
@@ -299,6 +301,9 @@ dialog form, dialog > p { padding: 12px 16px; margin: 0; }
 
 /* Phones: panel goes under the canvas */
 @media (max-width: 760px) {
+  /* The page scrolls as a whole, so the sticky toolbar stays in reach. */
+  html, body { height: auto; min-height: 100%; }
+  .toolbar { padding: 6px 12px; }
   .workspace { flex-direction: column; }
   .stage-area { min-height: 55vh; }
   .panel { width: auto; border-left: 0; border-top: 1px solid var(--line); }
@@ -324,7 +329,26 @@ dialog form, dialog > p { padding: 12px 16px; margin: 0; }
   stroke-linejoin: round;
 }
 .btn .caret { font-size: 11px; opacity: 0.8; }
-.topbar 
+
+/* Editing tools, right under the top bar so they sit next to the photo */
+.toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.toolbar::-webkit-scrollbar { display: none; }
+.toolbar .btn { flex-shrink: 0; min-height: 36px; white-space: nowrap; }
+.toolbar .field.inline { flex-shrink: 0; white-space: nowrap; }
+.toolbar-sep { width: 1px; align-self: stretch; margin: 4px 2px; background: var(--line); flex-shrink: 0; }
+
 /* Help tooltips (data-tip) */
 .with-info { display: inline-flex; align-items: center; }
 .with-info.wide { display: flex; width: 100%; }

@@ -343,6 +343,63 @@ function textRGB(canvas, box, bg) {
 
 const toHex = (rgb) => `#${rgb.map((v) => Math.round(v).toString(16).padStart(2, '0')).join('')}`;
 
+/**
+ * Text colour by elimination: cluster the colours inside the line's box, and
+ * prefer the cluster that is common inside but rare just beyond the line's two
+ * ends. Background and artwork (a drawing behind the text) carry on past the
+ * ends; the lettering stops. Falls back to estimateTextColor.
+ */
+export function textColorByContrast(canvas, box, vertical = false) {
+  const g = canvas.getContext('2d', { willReadFrequently: true });
+  const r = clampRect(canvas, box.x0, box.y0, box.x1, box.y1);
+  const w = r.x1 - r.x0; const h = r.y1 - r.y0;
+  if (w < 3 || h < 3) return estimateTextColor(canvas, box);
+  const read = (x0, y0, x1, y1) => {
+    const q = clampRect(canvas, x0, y0, x1, y1);
+    if (q.x1 - q.x0 < 1 || q.y1 - q.y0 < 1) return [];
+    const d = g.getImageData(q.x0, q.y0, q.x1 - q.x0, q.y1 - q.y0).data; const out = [];
+    for (let i = 0; i < d.length; i += 4) out.push([d[i], d[i + 1], d[i + 2]]);
+    return out;
+  };
+  const inside = read(r.x0, r.y0, r.x1, r.y1);
+  const t = vertical ? w : h; // line thickness
+  const ends = vertical
+    ? [...read(r.x0, r.y0 - 1.2 * t, r.x1, r.y0 - 0.2 * t), ...read(r.x0, r.y1 + 0.2 * t, r.x1, r.y1 + 1.2 * t)]
+    : [...read(r.x0 - 1.2 * t, r.y0, r.x0 - 0.2 * t, r.y1), ...read(r.x1 + 0.2 * t, r.y0, r.x1 + 1.2 * t, r.y1)];
+  if (ends.length < 20) return estimateTextColor(canvas, box);
+  const dist = (a, b) => Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]);
+  // k-means (k = 4) on the inside colours, started from spread-out samples.
+  const sorted = [...inside].sort((a, b) => (a[0] + a[1] + a[2]) - (b[0] + b[1] + b[2]));
+  let centres = [0.05, 0.35, 0.65, 0.95].map((f) => sorted[Math.floor(f * (sorted.length - 1))]);
+  for (let it = 0; it < 6; it++) {
+    const sums = centres.map(() => [0, 0, 0, 0]);
+    for (const p of inside) {
+      let best = 0; for (let k = 1; k < centres.length; k++) if (dist(p, centres[k]) < dist(p, centres[best])) best = k;
+      sums[best][0] += p[0]; sums[best][1] += p[1]; sums[best][2] += p[2]; sums[best][3]++;
+    }
+    centres = sums.map((sm, k) => (sm[3] ? [sm[0] / sm[3], sm[1] / sm[3], sm[2] / sm[3]] : centres[k]));
+  }
+  const T = 60;
+  const med = (arr, k) => { const v = arr.map((p) => p[k]).sort((a, b) => a - b); return v[v.length >> 1]; };
+  const around = [0, 1, 2].map((k) => med(ends, k));
+  // Of the colours that stop at the line's ends, the one most unlike the
+  // surroundings is the solid stroke colour (the others are blends at its edges).
+  let pick = null; let pickScore = 0;
+  for (const c of centres) {
+    const sIn = inside.filter((p) => dist(p, c) < T).length / inside.length;
+    const sOut = ends.filter((p) => dist(p, c) < T).length / ends.length;
+    if (sIn < 0.04 || sOut > 0.5 * sIn) continue;
+    const score = dist(c, around);
+    if (score > pickScore) { pickScore = score; pick = c; }
+  }
+  if (!pick) return estimateTextColor(canvas, box);
+  // Refine: the stroke cores, i.e. the members of that cluster least like the
+  // surroundings (edge pixels are blends).
+  const members = inside.filter((p) => dist(p, pick) < T).sort((a, b) => dist(b, around) - dist(a, around));
+  const core = members.slice(0, Math.max(1, Math.ceil(members.length * 0.4)));
+  return toHex([0, 1, 2].map((k) => core.reduce((n, p) => n + p[k], 0) / core.length));
+}
+
 /** Guess the text colour: pixels inside the box that differ most from the background. */
 export function estimateTextColor(canvas, box) {
   const bg = sampleRing(canvas, box, 2);
