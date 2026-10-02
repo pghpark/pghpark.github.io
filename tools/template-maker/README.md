@@ -62,12 +62,34 @@ detection, use a sharp, well-lit photo taken straight on, with printed (not hand
 - **Vertical text:** stored as one character per line, so the PSD and PDF look the same as the canvas. (ag-psd warns that writing true vertical-orientation PSD text can corrupt the file.)
 - **Fallback warning:** if Google Fonts can't load, the editor warns instead of quietly exporting in a fallback font.
 
+## Auto detect layout
+
+**Auto detect** is the default layout. It reads the photo four ways in parallel workers:
+- as horizontal text with Tesseract page modes 3 (auto), 6 (single block) and 11 (sparse text);
+- as vertical text with `chi_tra_vert`, mode 5.
+
+It then:
+1. keeps the best horizontal reading and the best vertical reading, scored as readable characters × confidence², and uses the better of the two as the base;
+2. swaps in confident lines of the other orientation wherever they explain a region better, as long as they don't cut across a much longer line. That way a poster with a vertical title and horizontal details gets both.
+
+It was tuned on synthetic Traditional Chinese poster photos (10 fonts; tilt, perspective, blur, noise, shading and JPEG damage), and the final check used 50 photos that played no part in tuning:
+
+| Character accuracy (F1) | Horizontal | Block | Scattered | Vertical | Mixed | All |
+|---|---|---|---|---|---|---|
+| **Auto detect** | **71.2** | **92.6** | 72.3 | **74.4** | **74.4** | **77.0** |
+| Horizontal text (Tesseract auto) | 62.3 | 86.0 | 52.6 | 0.0 | 58.0 | 51.8 |
+| Best fixed mode for each column* | 70.1 | 90.8 | 72.5 | 70.5 | 72.0 | 64.8 |
+
+\* Each column shows whichever fixed mode did best there; the "All" figure is the best fixed mode overall (Scattered text).
+
+The trade-off is speed: about four OCR passes instead of one. Pick a fixed layout when you already know it.
+
 ## OCR accuracy
 
 Tesseract does well on clear printed text, but expect to fix a few characters by hand. In testing
 it read 烏龍鮮奶茶 as 局龍魚奶余. Tips:
 
-- Pick a **Layout** that fits the photo: *Scattered text* for posters, *Vertical text* for 直排.
+- Leave **Layout** on *Auto detect*, or pick a fixed layout if you know it (faster).
 - Straight-on, well-lit, high-resolution photos help a lot.
 - Raise **Skip results below confidence** if you get junk boxes.
 

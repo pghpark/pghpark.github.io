@@ -280,8 +280,9 @@ async function runDetect() {
     pushHistory();
     renderLayers();
     refreshEnabled();
+    const nVertical = lines.filter((l) => l.vertical).length;
     toast(lines.length
-      ? t(lines.length === 1 ? 'foundOne' : 'foundMany', { n: lines.length })
+      ? `${t(lines.length === 1 ? 'foundOne' : 'foundMany', { n: lines.length })}${nVertical && nVertical < lines.length ? ` ${t('foundVertical', { n: nVertical })}` : ''}`
       : t('noTextFound'), lines.length ? 'ok' : 'warn');
   });
 }
