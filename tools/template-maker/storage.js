@@ -5,6 +5,7 @@
 //   remove(id)
 import { SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_BUCKET } from './config.js';
 import { blobToDataURL } from './imaging.js';
+import { t } from './i18n.js';
 
 const DB_NAME = 'template-maker';
 const STORE = 'templates';
@@ -28,7 +29,8 @@ function tx(db, mode, fn) {
 }
 
 export class LocalStore {
-  label = 'This browser';
+  labelKey = 'storeLocal';
+  whereKey = 'storeLocalIn';
   isCloud = false;
 
   async list() {
@@ -42,7 +44,7 @@ export class LocalStore {
   async get(id) {
     const db = await openDb();
     const rec = await tx(db, 'readonly', (s) => s.get(id));
-    if (!rec) throw new Error('Template not found');
+    if (!rec) throw new Error(t('errNotFound'));
     return rec;
   }
 
@@ -72,7 +74,7 @@ export function getSupabase() {
     const s = document.createElement('script');
     s.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js';
     s.onload = () => resolve(window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY));
-    s.onerror = () => { clientPromise = null; reject(new Error('Could not load Supabase')); };
+    s.onerror = () => { clientPromise = null; reject(new Error(t('errSupabase'))); };
     document.head.appendChild(s);
   });
   return clientPromise;
@@ -84,7 +86,8 @@ const unwrap = ({ data, error }) => {
 };
 
 export class CloudStore {
-  label = 'Cloud';
+  labelKey = 'storeCloud';
+  whereKey = 'storeCloudIn';
   isCloud = true;
 
   constructor(client, user) {
@@ -150,7 +153,7 @@ export async function recordToFile(rec) {
 
 export async function fileToRecord(file) {
   const data = JSON.parse(await file.text());
-  if (data.format !== 'template-maker') throw new Error('Not a Template Maker file');
+  if (data.format !== 'template-maker') throw new Error(t('errNotTemplate'));
   const toBlob = async (url) => (url ? (await fetch(url)).blob() : null);
   return { ...data, background: await toBlob(data.background), original: await toBlob(data.original) };
 }

@@ -1,10 +1,11 @@
 import { detectText, hasCjk, OCR_MODES } from './ocr.js';
+import { t, applyI18n, setLang, getLang, LANGS } from './i18n.js';
 import {
   fileToCanvas, urlToCanvas, cloneCanvas, eraseBox, estimateTextColor, canvasToBlob,
 } from './imaging.js';
 import { FONTS, DEFAULT_FAMILY, ensureFontsLoaded, normalizeWeight } from './fonts.js';
 import {
-  exportRaster, exportSVG, exportPDF, exportPSD, download, safeFilename, isText,
+  exportRaster, exportSVG, exportPDF, exportPSD, exportPPTX, download, safeFilename, isText,
 } from './export.js';
 import {
   LocalStore, CloudStore, cloudConfigured, getSupabase, recordToFile, fileToRecord,
@@ -82,7 +83,7 @@ function markDirty() {
 }
 
 function updateTitle() {
-  document.title = `${state.dirty ? '• ' : ''}${state.name || 'Template Maker'} — Template Maker`;
+  document.title = `${state.dirty ? '• ' : ''}${state.name || t('untitled')} — ${t('appName')}`;
 }
 
 const hasDoc = () => Boolean(state.clean);
@@ -250,14 +251,14 @@ function textFromLine(line, color) {
 async function runDetect() {
   if (!state.original) return;
   const existing = canvas.getObjects().filter((o) => o.ocr);
-  if (existing.length && !confirm('Replace the text boxes found last time? (Text you added yourself is kept.)')) return;
+  if (existing.length && !confirm(t('confirmReplace'))) return;
   const mode = $('#ocrMode').value;
   const erase = $('#eraseText').checked;
-  await withBusy('Detecting text…', async () => {
+  await withBusy(t('detecting'), async () => {
     const lines = await detectText(state.original, {
       mode,
       minConfidence: Number($('#minConf').value),
-      onProgress: (m) => setBusy(`${m.status}…`, typeof m.progress === 'number' ? m.progress : null),
+      onProgress: (m) => setBusy(`${t(`ocr:${m.status}`).replace(/^ocr:/, '')}…`, typeof m.progress === 'number' ? m.progress : null),
     });
     history.paused = true;
     canvas.discardActiveObject();
@@ -279,9 +280,10 @@ async function runDetect() {
     pushHistory();
     renderLayers();
     refreshEnabled();
+    const nVertical = lines.filter((l) => l.vertical).length;
     toast(lines.length
-      ? `Found ${lines.length} line${lines.length > 1 ? 's' : ''} of text. Double-click any box to edit.`
-      : 'No text found. Try another detection mode, or add text by hand.', lines.length ? 'ok' : 'warn');
+      ? `${t(lines.length === 1 ? 'foundOne' : 'foundMany', { n: lines.length })}${nVertical && nVertical < lines.length ? ` ${t('foundVertical', { n: nVertical })}` : ''}`
+      : t('noTextFound'), lines.length ? 'ok' : 'warn');
   });
 }
 
@@ -289,7 +291,7 @@ function addText() {
   if (!hasDoc()) return;
   const W = canvas.getWidth();
   const H = canvas.getHeight();
-  const o = newText('雙擊編輯文字', { fontSize: Math.round(Math.max(W, H) / 20) });
+  const o = newText(t('newTextSample'), { fontSize: Math.round(Math.max(W, H) / 20) });
   ensureFontsLoaded([o]).then(() => {
     o.set({ left: W / 2 - o.width / 2, top: H / 2 - o.height / 2 });
     o.setCoords();
@@ -384,14 +386,14 @@ function renderLayers() {
     li.className = o === canvas.getActiveObject() ? 'selected' : '';
     const label = document.createElement('button');
     label.className = 'layer-label';
-    label.textContent = (o.vertical ? fromVertical(o.text) : o.text).replace(/\s+/g, ' ') || '(empty)';
-    label.title = 'Select';
+    label.textContent = (o.vertical ? fromVertical(o.text) : o.text).replace(/\s+/g, ' ') || t('layerEmpty');
+    label.title = t('layerSelect');
     label.style.fontFamily = `"${o.fontFamily}"`;
     label.addEventListener('click', () => { canvas.setActiveObject(o); canvas.requestRenderAll(); });
     const eye = document.createElement('button');
     eye.className = 'icon';
     eye.textContent = o.visible === false ? '◌' : '●';
-    eye.title = o.visible === false ? 'Show' : 'Hide';
+    eye.title = t(o.visible === false ? 'layerShow' : 'layerHide');
     eye.addEventListener('click', () => {
       o.set('visible', o.visible === false);
       canvas.discardActiveObject();
@@ -478,17 +480,19 @@ function undoErase() {
 /* ---------------- New / open / save ---------------- */
 
 function confirmDiscard() {
-  return !state.dirty || confirm('You have unsaved changes. Discard them?');
+  return !state.dirty || confirm(t('confirmDiscard'));
 }
 
 async function newFromFile(file) {
-  if (!file || !file.type.startsWith('image/')) { toast('Please choose an image file.', 'warn'); return; }
+  // Some systems give HEIC/AVIF files an empty MIME type, so fall back to the extension.
+  const looksLikeImage = file && (file.type.startsWith('image/') || /\.(jpe?g|png|webp|gif|bmp|avif|heic|heif)$/i.test(file.name));
+  if (!looksLikeImage) { toast(t('notImage'), 'warn', 6000); return; }
   if (!confirmDiscard()) return;
-  await withBusy('Loading photo…', async () => {
+  await withBusy(t('loadingPhoto'), async () => {
     state.original = await fileToCanvas(file);
     state.clean = cloneCanvas(state.original);
     state.id = crypto.randomUUID();
-    state.name = file.name.replace(/\.[^.]+$/, '') || 'Untitled';
+    state.name = file.name.replace(/\.[^.]+$/, '') || t('untitled');
     state.bgDirty = true;
     state.origDirty = true;
     state.home = null;
@@ -516,7 +520,7 @@ async function buildRecord({ full = false } = {}) {
   canvas.discardActiveObject();
   return {
     id: state.id,
-    name: state.name || 'Untitled',
+    name: state.name || t('untitled'),
     width: W,
     height: H,
     objects: serializeObjects(),
@@ -530,7 +534,7 @@ async function buildRecord({ full = false } = {}) {
 async function save() {
   if (!hasDoc()) return;
   const store = currentStore();
-  await withBusy(`Saving to ${store.label.toLowerCase()}…`, async () => {
+  await withBusy(t('saving', { where: t(store.whereKey) }), async () => {
     const key = storeKey(store);
     await store.put(await buildRecord({ full: state.home !== key }));
     state.home = key;
@@ -538,7 +542,7 @@ async function save() {
     state.origDirty = false;
     state.dirty = false;
     updateTitle();
-    toast(`Saved to ${store.label.toLowerCase()}.`, 'ok');
+    toast(t('saved', { where: t(store.whereKey) }), 'ok');
   });
 }
 
@@ -549,10 +553,10 @@ async function openRecord(rec, homeKey) {
     try { return await urlToCanvas(url); } finally { URL.revokeObjectURL(url); }
   };
   state.clean = await toCanvas(rec.background);
-  if (!state.clean) throw new Error('This template has no background image');
+  if (!state.clean) throw new Error(t('errNoBackground'));
   state.original = await toCanvas(rec.original);
   state.id = rec.id || crypto.randomUUID();
-  state.name = rec.name || 'Untitled';
+  state.name = rec.name || t('untitled');
   state.home = homeKey;
   state.bgDirty = !homeKey;
   state.origDirty = !homeKey;
@@ -575,7 +579,7 @@ async function showOpenDialog() {
   if (state.user && state.stores.cloud) stores.unshift(state.stores.cloud);
   tabs.replaceChildren(...stores.map((s, i) => {
     const b = document.createElement('button');
-    b.textContent = s.label;
+    b.textContent = t(s.labelKey);
     b.className = i === 0 ? 'active' : '';
     b.addEventListener('click', () => {
       tabs.querySelectorAll('button').forEach((x) => x.classList.remove('active'));
@@ -591,37 +595,37 @@ async function showOpenDialog() {
 
 async function fillOpenList(store) {
   const list = $('#templateList');
-  list.replaceChildren(Object.assign(document.createElement('li'), { className: 'muted', textContent: 'Loading…' }));
+  list.replaceChildren(Object.assign(document.createElement('li'), { className: 'muted', textContent: t('loading') }));
   try {
     const items = await store.list();
     if (!items.length) {
-      list.replaceChildren(Object.assign(document.createElement('li'), { className: 'muted', textContent: 'No saved templates yet.' }));
+      list.replaceChildren(Object.assign(document.createElement('li'), { className: 'muted', textContent: t('noTemplates') }));
       return;
     }
-    list.replaceChildren(...items.map((t) => {
+    list.replaceChildren(...items.map((tpl) => {
       const li = document.createElement('li');
       li.className = 'template-card';
       const open = document.createElement('button');
       open.className = 'template-open';
-      if (t.thumbnail) open.append(Object.assign(document.createElement('img'), { src: t.thumbnail, alt: '' }));
+      if (tpl.thumbnail) open.append(Object.assign(document.createElement('img'), { src: tpl.thumbnail, alt: '' }));
       const meta = document.createElement('span');
       meta.innerHTML = '<strong></strong><small></small>';
-      meta.querySelector('strong').textContent = t.name;
-      meta.querySelector('small').textContent = `${t.width}×${t.height} · ${t.updatedAt ? new Date(t.updatedAt).toLocaleString() : ''}`;
+      meta.querySelector('strong').textContent = tpl.name;
+      meta.querySelector('small').textContent = `${tpl.width}×${tpl.height} · ${tpl.updatedAt ? new Date(tpl.updatedAt).toLocaleString(LANGS[getLang()].htmlLang) : ''}`;
       open.append(meta);
       open.addEventListener('click', async () => {
         if (!confirmDiscard()) return;
         $('#openDialog').close();
-        await withBusy('Opening…', async () => openRecord(await store.get(t.id), storeKey(store)));
+        await withBusy(t('opening'), async () => openRecord(await store.get(tpl.id), storeKey(store)));
       });
       const del = document.createElement('button');
       del.className = 'icon danger';
       del.textContent = '✕';
-      del.title = 'Delete';
+      del.title = t('delete');
       del.addEventListener('click', async () => {
-        if (!confirm(`Delete “${t.name}”? This can't be undone.`)) return;
-        await withBusy('Deleting…', () => store.remove(t.id));
-        if (state.id === t.id && state.home === storeKey(store)) { state.home = null; state.bgDirty = true; state.origDirty = true; }
+        if (!confirm(t('confirmDelete', { name: tpl.name }))) return;
+        await withBusy(t('deleting'), () => store.remove(tpl.id));
+        if (state.id === tpl.id && state.home === storeKey(store)) { state.home = null; state.bgDirty = true; state.origDirty = true; }
         fillOpenList(store);
       });
       li.append(open, del);
@@ -639,16 +643,19 @@ async function doExport(kind) {
   if ($('#showOriginal').checked) { $('#showOriginal').checked = false; setBackground(state.clean); }
   const base = safeFilename(state.name);
   const scale = Number($('#exportScale').value) || 1;
-  await withBusy(`Exporting ${kind.toUpperCase()}…`, async () => {
+  await withBusy(t('exporting', { kind: kind.toUpperCase() }), async () => {
     if (['png', 'jpeg', 'webp'].includes(kind)) {
       download(await exportRaster(canvas, kind, 0.92, scale), `${base}.${kind === 'jpeg' ? 'jpg' : kind}`);
+    } else if (kind === 'pptx') {
+      download(await exportPPTX(canvas, state.clean, state.name), `${base}.pptx`);
+      toast(t('pptxSaved'), 'ok', 8000);
     } else if (kind === 'svg') {
       download(await exportSVG(canvas), `${base}.svg`);
     } else if (kind === 'pdf') {
       download(await exportPDF(canvas, state.clean, state.name, (msg) => setBusy(msg)), `${base}.pdf`);
     } else if (kind === 'psd') {
       download(await exportPSD(canvas, state.clean, state.original), `${base}.psd`);
-      toast('PSD saved. When Photoshop asks to update text layers, click “Update”.', 'ok', 7000);
+      toast(t('psdSaved'), 'ok', 7000);
     } else if (kind === 'json') {
       download(await recordToFile(await buildRecord({ full: true })), `${base}.template.json`);
     }
@@ -657,6 +664,80 @@ async function doExport(kind) {
 }
 
 /* ---------------- Cloud sign-in ---------------- */
+
+function updateSaveTitle() {
+  $('#saveBtn').title = t(state.user ? 'saveTitleCloud' : 'saveTitleLocal');
+}
+
+const FONT_LABELS = { 'Noto Sans TC': 'fontSans', 'Noto Serif TC': 'fontSerif' };
+
+/** Dropdowns whose option text comes from code rather than index.html. */
+function renderOptions() {
+  const mode = $('#ocrMode').value;
+  $('#ocrMode').replaceChildren(...Object.entries(OCR_MODES).map(([k, v]) => new Option(t(v.labelKey), k)));
+  if (mode) $('#ocrMode').value = mode;
+  const font = $('#propFont').value;
+  $('#propFont').replaceChildren(...Object.keys(FONTS).map((f) => new Option(FONT_LABELS[f] ? t(FONT_LABELS[f]) : f, f)));
+  if (font) $('#propFont').value = font;
+}
+
+/** (i) buttons: one shared bubble with the explanation, placed next to the button. */
+function initInfo() {
+  const pop = $('#infoPop');
+  let openBtn = null;
+  const hide = () => {
+    pop.hidden = true;
+    openBtn?.setAttribute('aria-expanded', 'false');
+    openBtn = null;
+  };
+  const show = (btn) => {
+    hide();
+    openBtn = btn;
+    btn.setAttribute('aria-expanded', 'true');
+    pop.textContent = t(`info:${btn.dataset.info}`);
+    pop.hidden = false;
+    const r = btn.getBoundingClientRect();
+    const w = pop.offsetWidth;
+    const h = pop.offsetHeight;
+    const left = Math.min(Math.max(16, r.left + r.width / 2 - w / 2), window.innerWidth - w - 16);
+    const below = r.bottom + 8 + h <= window.innerHeight - 8;
+    pop.style.left = `${left}px`;
+    pop.style.top = `${below ? r.bottom + 8 : Math.max(8, r.top - h - 8)}px`;
+  };
+  document.querySelectorAll('.info').forEach((b) => b.setAttribute('aria-expanded', 'false'));
+  // Capture phase, so a click on (i) inside a <label> or <summary> never toggles that control.
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.info');
+    if (btn) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (openBtn === btn) hide(); else show(btn);
+    } else if (!e.target.closest('#infoPop')) {
+      hide();
+    }
+  }, true);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hide(); });
+  window.addEventListener('resize', hide);
+  document.addEventListener('scroll', hide, true);
+  document.addEventListener('langchange', hide);
+}
+
+function initLanguage() {
+  const sel = $('#langSelect');
+  sel.replaceChildren(...Object.entries(LANGS).map(([k, v]) => new Option(v.label, k)));
+  sel.value = getLang();
+  sel.addEventListener('change', () => setLang(sel.value));
+  applyI18n();
+  renderOptions();
+  document.addEventListener('langchange', () => {
+    sel.value = getLang();
+    renderOptions();
+    renderLayers();
+    renderProps();
+    updateSaveTitle();
+    updateTitle();
+  });
+}
 
 async function initCloud() {
   if (!cloudConfigured()) {
@@ -672,7 +753,7 @@ async function initCloud() {
       $('#signInBtn').hidden = Boolean(state.user);
       $('#userBox').hidden = !state.user;
       $('#userEmail').textContent = state.user?.email || '';
-      $('#saveBtn').title = state.user ? 'Save to cloud (Ctrl+S)' : 'Save in this browser (Ctrl+S)';
+      updateSaveTitle();
     };
     apply((await client.auth.getSession()).data.session);
     client.auth.onAuthStateChange((_event, session) => apply(session));
@@ -686,18 +767,20 @@ async function initCloud() {
       });
       if (error) { toast(error.message, 'error', 6000); return; }
       $('#authDialog').close();
-      toast(`Check ${email} for a sign-in link.`, 'ok', 8000);
+      toast(t('checkEmail', { email }), 'ok', 8000);
     });
   } catch (e) {
-    toast(`Cloud unavailable: ${e.message}`, 'error', 6000);
+    toast(t('cloudUnavailable', { msg: e.message }), 'error', 6000);
   }
 }
 
 /* ---------------- Wiring ---------------- */
 
 function init() {
-  $('#ocrMode').replaceChildren(...Object.entries(OCR_MODES).map(([k, v]) => new Option(v.label, k)));
-  $('#propFont').replaceChildren(...Object.keys(FONTS).map((f) => new Option(f, f)));
+  initLanguage();
+  initInfo();
+  updateSaveTitle();
+  updateTitle();
 
   $('#fileInput').addEventListener('change', (e) => { newFromFile(e.target.files[0]); e.target.value = ''; });
   $('#importInput').addEventListener('change', async (e) => {
@@ -705,7 +788,7 @@ function init() {
     e.target.value = '';
     if (!file || !confirmDiscard()) return;
     $('#openDialog').close();
-    await withBusy('Importing…', async () => openRecord(await fileToRecord(file), null));
+    await withBusy(t('importing'), async () => openRecord(await fileToRecord(file), null));
   });
   $('#detectBtn').addEventListener('click', runDetect);
   $('#addTextBtn').addEventListener('click', addText);
@@ -756,7 +839,7 @@ function init() {
   document.addEventListener('fontsfailed', (e) => {
     if (fontWarned) return;
     fontWarned = true;
-    toast(`Couldn't load ${e.detail.join(', ').replace(/ 32px/g, '')} from Google Fonts — text is shown in a fallback font. Check your connection and reload.`, 'warn', 9000);
+    toast(t('fontsFailed', { fonts: e.detail.join(', ').replace(/ 32px/g, '') }), 'warn', 9000);
   });
 
   refreshEnabled();

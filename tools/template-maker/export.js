@@ -1,6 +1,7 @@
 // Exporters: PNG / JPEG / WebP / SVG / PDF / PSD.
 import { fontEntry, fetchFontBytes, subsetFont, ensureFontsLoaded, normalizeWeight, FONTS } from './fonts.js';
 import { canvasToBlob } from './imaging.js';
+import { t } from './i18n.js';
 
 export const isText = (o) => o && typeof o.text === 'string' && o.visible !== false;
 
@@ -85,9 +86,10 @@ export async function exportPDF(canvas, background, name, onProgress = () => {})
   doc.registerFontkit(fontkit);
   doc.setTitle(name || 'Template');
   doc.setCreator('Template Maker');
+  doc.setLanguage('zh-TW');
   const page = doc.addPage([W, H]);
 
-  onProgress('Encoding background…');
+  onProgress(t('encodingBackground'));
   const bg = await doc.embedJpg(await (await canvasToBlob(background, 'image/jpeg', 0.92)).arrayBuffer());
   page.drawImage(bg, { x: 0, y: 0, width: W, height: H });
 
@@ -100,7 +102,7 @@ export async function exportPDF(canvas, background, name, onProgress = () => {})
   }
   const fonts = new Map();
   for (const [key, g] of groups) {
-    onProgress(`Downloading ${g.family} ${normalizeWeight(g.weight)} (first time only)…`);
+    onProgress(t('downloadingFont', { font: `${g.family} ${normalizeWeight(g.weight)}` }));
     const bytes = await fetchFontBytes(g.family, g.weight);
     const sub = await subsetFont(bytes, g.text);
     // locl:false — Noto CJK's locl swaps digits to alternate glyphs in Latin runs,
@@ -185,4 +187,62 @@ export async function exportPSD(canvas, background, original) {
   };
   const buf = agPsd.writePsd(psd, { generateThumbnail: true });
   return new Blob([buf], { type: 'image/vnd.adobe.photoshop' });
+}
+
+/**
+ * PowerPoint (.pptx), the most reliable way into Canva, Google Slides, Keynote
+ * and PowerPoint with editable text: one slide the size of the photo, the
+ * cleaned background as a picture, and one real text box per text box.
+ * Lines are kept exactly as on the canvas (wrapping off, exact line spacing).
+ */
+export async function exportPPTX(canvas, background, name) {
+  const texts = await prepare(canvas);
+  const PX = 96; // pixels per inch
+  const W = canvas.getWidth();
+  const H = canvas.getHeight();
+  const pptx = new PptxGenJS();
+  pptx.defineLayout({ name: 'TEMPLATE', width: W / PX, height: H / PX });
+  pptx.layout = 'TEMPLATE';
+  pptx.title = name || 'Template';
+  const slide = pptx.addSlide();
+  const bg = await canvasToBlob(background, 'image/jpeg', 0.92);
+  const bgData = await new Promise((resolve) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(fr.result);
+    fr.readAsDataURL(bg);
+  });
+  slide.addImage({ data: bgData.replace(/^data:/, ''), x: 0, y: 0, w: W / PX, h: H / PX });
+
+  for (const o of texts) {
+    const g = textGeometry(o);
+    const c = o.getCenterPoint();
+    // Unrotated box; a little extra width so a slightly wider substitute font doesn't wrap.
+    const w = o.width * o.scaleX;
+    const h = o.height * o.scaleY;
+    const extra = w * 0.06;
+    const align = ['center', 'right'].includes(o.textAlign) ? o.textAlign : 'left';
+    const x0 = c.x - w / 2 - (align === 'center' ? extra / 2 : align === 'right' ? extra : 0);
+    const hex = [g.color.r, g.color.g, g.color.b].map((v) => Math.round(v).toString(16).padStart(2, '0')).join('');
+    slide.addText(g.lines.map((l) => l.text).join('\n'), {
+      x: x0 / PX,
+      y: (c.y - h / 2) / PX,
+      w: (w + extra) / PX,
+      h: h / PX,
+      fontFace: o.fontFamily,
+      fontSize: g.fontSize * 0.75, // px → pt
+      bold: normalizeWeight(o.fontWeight) === 700,
+      color: hex,
+      transparency: Math.round((1 - g.color.a * (o.opacity ?? 1)) * 100),
+      align,
+      valign: 'top',
+      margin: 0,
+      wrap: false,
+      fit: 'none',
+      lineSpacing: g.leading * 0.75, // exact spacing, same as the canvas
+      rotate: g.angle,
+      lang: 'zh-TW',
+    });
+  }
+  const buf = await pptx.write({ outputType: 'arraybuffer', compression: true });
+  return new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' });
 }
