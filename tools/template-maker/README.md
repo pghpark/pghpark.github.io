@@ -23,6 +23,15 @@ To send someone the app already in their language, add `?lang=` to the link:
 
 Every interface string, in both languages, is in `i18n.js`.
 
+## Install on a phone
+
+It installs like an app, without an app store:
+
+- **iPhone / iPad:** open https://pghpark.github.io/tools/template-maker/ in **Safari**, tap **Share** → **Add to Home Screen** → **Add**.
+- **Android:** open the same link in **Chrome**, tap **⋮** → **Install app** (or **Add to Home screen**).
+
+It then opens full screen from its icon (範本製作器). Templates saved in the browser are stored per app: on iPhone the Home Screen app keeps its own, separate from Safari's, so save a template again (or export it as .template.json and open it) to have it in both. Files: `manifest.webmanifest` and `icons/`.
+
 ## Photo formats
 
 JPG, PNG, WebP, GIF, BMP and AVIF work in every current browser. iPhone **HEIC** photos only open in
