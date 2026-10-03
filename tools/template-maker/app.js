@@ -794,10 +794,9 @@ function harmoniseBlocks(items) {
   // dark colours count as the same.
   const sameColour = (a, b, limit) => Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]) <= limit
     || (Math.max(...a) < 120 && Math.max(...b) < 120);
-  const info = rows.map(({ o }) => ({ o, b: o.fitBox, fs: o.fontSize, han: isHan(o.text), c: rgb(o.fill), n: [...o.text.replace(/\s/g, '')].length }));
+  const info = rows.map(({ o }) => ({ o, b: o.fitBox, han: isHan(o.text), c: rgb(o.fill), n: [...o.text.replace(/\s/g, '')].length }));
   const together = (a, b) => {
     if (a.han !== b.han) return false;
-    const fs = Math.min(a.fs, b.fs);
     if (!sameColour(a.c, b.c, 90)) return false;
     // Side by side on one row at the same size: items of one kind (the names
     // in a speaker grid), which the original sets in one style.
@@ -807,13 +806,17 @@ function harmoniseBlocks(items) {
     if (Math.abs((a.b.y0 + a.b.y1) / 2 - (b.b.y0 + b.b.y1) / 2) <= 0.35 * Math.min(ha, hb) && Math.max(ha, hb) / Math.min(ha, hb) <= 1.35) {
       return Math.max(a.b.x0, b.b.x0) - Math.min(a.b.x1, b.b.x1) <= 10 * Math.min(ha, hb);
     }
-    if (Math.max(a.fs, b.fs) / fs > 1.25) return false;
+    // Stacked rows: judged by the letters' height in the photo too (h, about
+    // 0.9 of the font size), not by each line's fitted size, which differs a
+    // little between browsers and split Safari's paragraphs into pieces.
+    const h = Math.min(ha, hb);
+    if (Math.max(ha, hb) / h > 1.25) return false;
     const [top, low] = a.b.y0 <= b.b.y0 ? [a, b] : [b, a];
     const gap = low.b.y0 - top.b.y1;
-    if (gap < -0.3 * fs || gap > 1.2 * fs) return false;
+    if (gap < -0.35 * h || gap > 1.35 * h) return false;
     const overlap = Math.min(a.b.x1, b.b.x1) - Math.max(a.b.x0, b.b.x0);
-    const aligned = Math.abs(a.b.x0 - b.b.x0) <= fs || Math.abs(a.b.x1 - b.b.x1) <= fs
-      || Math.abs((a.b.x0 + a.b.x1) / 2 - (b.b.x0 + b.b.x1) / 2) <= fs;
+    const aligned = Math.abs(a.b.x0 - b.b.x0) <= 1.1 * h || Math.abs(a.b.x1 - b.b.x1) <= 1.1 * h
+      || Math.abs((a.b.x0 + a.b.x1) / 2 - (b.b.x0 + b.b.x1) / 2) <= 1.1 * h;
     return aligned || overlap >= 0.5 * Math.min(a.b.x1 - a.b.x0, b.b.x1 - b.b.x0);
   };
   // Union-find over the pairs that belong together.
@@ -950,14 +953,24 @@ function mergeParagraphs(objs, blocks) {
       indent = '\u3000'.repeat(k);
     }
     // At the shared size and letter spacing every line must still be about as
-    // wide as its own fitted line (within 6%), or the paragraph's lines would
-    // stick out past, or fall short of, the original lines: keep them separate.
+    // wide as its own fitted line (within 6%), or it would stick out past, or
+    // fall short of, the original line. A paragraph's short last line keeps its
+    // natural spacing while the full lines are stretched: 15% for it. A line
+    // that doesn't fit stays its own box and the lines around it still merge
+    // (one odd line used to keep a whole paragraph line by line).
     const widthAt = (o) => {
       const gaps = Math.max(0, [...o.text].length - 1);
       const glyphs = ((o.width - (gaps * (o.charSpacing || 0) * o.fontSize) / 1000) * 100) / o.fontSize; // at size 100
       return (glyphs * fs) / 100 + (gaps * charSpacing * fs) / 1000;
     };
-    if (rows.some((o) => Math.abs(widthAt(o) / o.width - 1) > 0.06)) return;
+    const fullWidth = med(rows.map((o) => o.width));
+    const fits = (o, i) => Math.abs(widthAt(o) / o.width - 1) <= (i === rows.length - 1 && o.width < 0.8 * fullWidth ? 0.15 : 0.06);
+    if (!rows.every(fits)) {
+      let seg = [];
+      rows.forEach((o, i) => { if (fits(o, i)) seg.push(o); else { mergeRun(seg, out); seg = []; } });
+      mergeRun(seg, out);
+      return;
+    }
     // Two lines give no majority to say which size is right: only when they
     // were fitted at nearly the same size (a title over a subtitle stays two boxes).
     if (rows.length === 2 && rows.some((o) => Math.abs(o.fontSize / fs - 1) > 0.04)) return;
