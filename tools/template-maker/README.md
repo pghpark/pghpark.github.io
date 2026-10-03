@@ -80,8 +80,12 @@ detection, use a sharp, well-lit photo taken straight on, with printed (not hand
 - **Double-tap** an empty spot to zoom in there (2.5×); double-tap again for the whole poster.
 - **Pinch** to zoom (Ctrl + scroll on a computer). The Zoom menu goes from **Whole poster** down to 25%.
 - **Move / resize** in the pop-up unlocks that one box to drag or resize; **Done moving** (or tapping elsewhere) locks it again.
+- **Lock screen** (top left of the poster) is for just looking around: taps and clicks select nothing until **Unlock to edit**; moving and zooming work as usual. **＋ Text** unlocks it.
+- **Hold to see original** (top right of the poster) shows the untouched photo while you hold it. On a touch screen it waits a moment before switching, so a scroll that starts on it just scrolls (it used to flash the original in and out). Both buttons stay in reach just under the toolbar while the page scrolls through the poster.
 
-The intro cards (first visit, or **About Template Maker**) include these gestures. On a computer, text boxes drag and resize as usual.
+The intro cards (first visit, or **About Template Maker**) include these gestures, and each time the app is opened on a phone or tablet the first poster on screen brings the same list as a short reminder (**Got it**, or **Don’t show for 30 days**). On a computer, text boxes drag and resize as usual.
+
+**Buttons** all look pressable: at least 44 px tall, bold, with a solid edge underneath that they sink onto when pressed (main actions blue, deleting red, the rest outlined).
 6. **Save** to this browser (IndexedDB), or to the cloud once Supabase is set up (below). The uploaded photo is kept as the original exactly as it was (no re-compression) when it wasn't resized, and an unchanged background reuses its saved copy, so saving again never degrades the images.
 7. **Export:** (image boxes are included in every format)
 

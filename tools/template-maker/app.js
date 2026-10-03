@@ -109,6 +109,7 @@ function refreshEnabled() {
   $('#canvasWrap').hidden = !on;
   $('#detectBtn').disabled = !state.original;
   $('#compareBtn').hidden = !state.original;
+  $('#lockBtn').hidden = !on;
 }
 
 /* ---------------- Canvas / zoom ---------------- */
@@ -292,7 +293,7 @@ function zoomAround(z, clientX, clientY) {
       return;
     }
     if (e.type === 'pointercancel' || Date.now() - p.t0 > TAP_MS) return;
-    const hit = hitAt(e);
+    const hit = state.viewLock ? null : hitAt(e); // locked screen: taps never select
     const now = Date.now();
     const again = now - lastTap.t < 400 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 30;
     if (hit) {
@@ -1453,10 +1454,12 @@ async function runDetect() {
     renderLayers();
     canvas.requestRenderAll();
   }
+  maybeShowTips();
 }
 
 function addText() {
   if (!hasDoc()) return;
+  if (state.viewLock) setViewLock(false, { quiet: true }); // the new box is selected for typing
   const W = canvas.getWidth();
   const H = canvas.getHeight();
   const o = newText(t('newTextSample'), { fontSize: Math.round(Math.max(W, H) / 20) });
@@ -1583,6 +1586,10 @@ function positionQuickEdit() {
   const top = c.top + b.top * z;
   const bottom = top + b.height * z;
   const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+  // Its box scrolled out of the photo area (scrolling down to the side panel
+  // on a phone): step aside instead of covering the panel; back when it returns.
+  const st = $('#stage').getBoundingClientRect();
+  box.classList.toggle('offscreen', bottom < Math.max(0, st.top) || top > Math.min(vh, st.bottom));
   const w = box.offsetWidth;
   const h = box.offsetHeight;
   let y = bottom + 10;
@@ -1598,6 +1605,7 @@ canvas.on('mouse:up', () => { if (transforming) { transforming = false; renderQu
 canvas.on('text:editing:entered', () => { $('#quickEdit').hidden = true; });
 canvas.on('text:editing:exited', () => renderQuickEdit());
 $('#stage').addEventListener('scroll', positionQuickEdit);
+window.addEventListener('scroll', positionQuickEdit, { passive: true });
 window.addEventListener('resize', positionQuickEdit);
 window.visualViewport?.addEventListener('resize', positionQuickEdit);
 
@@ -1715,13 +1723,52 @@ function setComparing(on) {
   renderQuickEdit();
 }
 {
+  // On a phone the button sits where a thumb lands to scroll the page: a
+  // finger only shows the original after resting on it briefly, and a finger
+  // that moves first scrolls as usual (the original used to flash in and out).
   const btn = $('#compareBtn');
-  btn.addEventListener('pointerdown', (e) => { e.preventDefault(); btn.setPointerCapture?.(e.pointerId); setComparing(true); });
-  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((ev) => btn.addEventListener(ev, () => setComparing(false)));
+  let hold = null;
+  const release = () => { if (hold) { clearTimeout(hold.timer); hold = null; } setComparing(false); };
+  btn.addEventListener('pointerdown', (e) => {
+    if (e.pointerType !== 'touch') { e.preventDefault(); btn.setPointerCapture?.(e.pointerId); setComparing(true); return; }
+    hold = { x: e.clientX, y: e.clientY, timer: setTimeout(() => setComparing(true), 150) };
+  });
+  btn.addEventListener('pointermove', (e) => {
+    if (hold && !comparing && Math.hypot(e.clientX - hold.x, e.clientY - hold.y) > 10) release();
+  });
+  // While the original shows, the finger may wobble without scrolling the page.
+  btn.addEventListener('touchmove', (e) => { if (comparing && e.cancelable) e.preventDefault(); }, { passive: false });
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((ev) => btn.addEventListener(ev, release));
   btn.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setComparing(true); } });
   btn.addEventListener('keyup', () => setComparing(false));
   btn.addEventListener('contextmenu', (e) => e.preventDefault());
 }
+
+/* ---------------- Lock screen ---------------- */
+
+// Height of the sticky toolbar (phones), so the buttons over the poster stop just below it.
+{
+  const tb = $('.toolbar');
+  new ResizeObserver(() => document.documentElement.style.setProperty('--toolbar-h', `${getComputedStyle(tb).position === 'sticky' ? tb.offsetHeight : 0}px`)).observe(tb);
+}
+
+// Lock screen: look around the poster without selecting anything. One finger
+// still moves it, double-tap and pinch still zoom; taps and clicks find no box.
+function setViewLock(on, { quiet = false } = {}) {
+  state.viewLock = on;
+  canvas.skipTargetFind = on;
+  canvas.selection = !on && state.tool === 'select' && !TOUCH;
+  canvas.discardActiveObject();
+  canvas.requestRenderAll();
+  renderQuickEdit();
+  const btn = $('#lockBtn');
+  btn.setAttribute('aria-pressed', String(on));
+  btn.classList.toggle('active', on);
+  $('#lockOff').hidden = on;
+  $('#lockOn').hidden = !on;
+  if (!quiet) toast(t(on ? 'lockedToast' : 'unlockedToast'), 'info', 2500);
+}
+$('#lockBtn').addEventListener('click', () => setViewLock(!state.viewLock));
 
 /* ---------------- Erase tool ---------------- */
 
@@ -1731,7 +1778,7 @@ function setTool(tool) {
   $('#eraseBtn').classList.toggle('active', tool === 'erase');
   $('#stage').classList.toggle('erasing', tool === 'erase');
   const selecting = tool === 'select';
-  canvas.selection = selecting && !TOUCH; // no box-select on phones (it grabbed several lines at once)
+  canvas.selection = selecting && !TOUCH && !state.viewLock; // no box-select on phones (it grabbed several lines at once)
   canvas.discardActiveObject();
   canvas.getObjects().forEach((o) => { o.selectable = selecting; o.evented = selecting; });
   canvas.defaultCursor = selecting ? 'default' : 'crosshair';
@@ -1945,6 +1992,7 @@ async function openRecord(rec, homeKey) {
   state.dirty = !homeKey;
   updateTitle();
   refreshEnabled();
+  maybeShowTips();
   applyZoom();
 }
 
@@ -2345,6 +2393,27 @@ function maybeShowInstall() {
   showInstall();
 }
 
+/* ---------------- Gesture reminder (phones) ---------------- */
+
+// Each time the app is opened on a phone or tablet, the first poster on screen
+// brings a short reminder of how to move around (the intro card's list), unless
+// it was turned off for 30 days or the intro was just shown.
+const TIPS_MUTE_KEY = 'tm-tips-muted-until';
+$('#tipsList').replaceChildren(...[...document.querySelector('#introTrack .intro-gestures').children].map((li) => li.cloneNode(true)));
+function maybeShowTips() {
+  if (!TOUCH || !hasDoc() || document.querySelector('dialog[open]')) return;
+  try {
+    if (sessionStorage.getItem('tm-tips-shown') || Number(localStorage.getItem(TIPS_MUTE_KEY)) > Date.now()) return;
+    sessionStorage.setItem('tm-tips-shown', '1');
+  } catch { return; }
+  $('#tipsDialog').showModal();
+}
+$('#tipsOk').addEventListener('click', () => $('#tipsDialog').close());
+$('#tipsMute').addEventListener('click', () => {
+  try { localStorage.setItem(TIPS_MUTE_KEY, String(Date.now() + 30 * 24 * 3600 * 1000)); } catch { /* storage blocked */ }
+  $('#tipsDialog').close();
+});
+
 /* ---------------- First-visit intro (swipe cards) ---------------- */
 
 const introCards = () => [...$('#introTrack').children];
@@ -2370,7 +2439,7 @@ function closeIntro() {
   const dlg = $('#introDialog');
   if (!dlg.open) return;
   dlg.close();
-  try { localStorage.setItem('tm-intro-seen', '1'); } catch { /* storage blocked */ }
+  try { localStorage.setItem('tm-intro-seen', '1'); sessionStorage.setItem('tm-tips-shown', '1'); } catch { /* storage blocked */ }
   self.templateMakerIsolate?.();
   setTimeout(maybeShowInstall, 400);
 }

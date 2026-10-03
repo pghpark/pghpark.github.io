@@ -17,7 +17,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" crossorigin="anonymous" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&family=Noto+Serif+TC:wght@400;700&family=Huninn&family=Iansui&display=swap">
-  <link rel="stylesheet" href="style.css?v=2026-10-03.15">
+  <link rel="stylesheet" href="style.css?v=2026-10-03.17">
   <!-- Versions are pinned; see README.md before upgrading (Fabric 7 changed text positioning). -->
   <script crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/fabric@7.4.0/dist/index.min.js"></script>
   <script crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
@@ -29,18 +29,18 @@
        reader-worker.js isn't imported; it is listed so the offline store keeps it. -->
   <script type="importmap">
     {"imports": {
-      "./app.js": "./app.js?v=2026-10-03.15",
-      "./i18n.js": "./i18n.js?v=2026-10-03.15",
-      "./imaging.js": "./imaging.js?v=2026-10-03.15",
-      "./fonts.js": "./fonts.js?v=2026-10-03.15",
-      "./export.js": "./export.js?v=2026-10-03.15",
-      "./storage.js": "./storage.js?v=2026-10-03.15",
-      "./config.js": "./config.js?v=2026-10-03.15",
-      "./paddle.js": "./paddle.js?v=2026-10-03.15",
-      "./reader-worker.js": "./reader-worker.js?v=2026-10-03.15"
+      "./app.js": "./app.js?v=2026-10-03.17",
+      "./i18n.js": "./i18n.js?v=2026-10-03.17",
+      "./imaging.js": "./imaging.js?v=2026-10-03.17",
+      "./fonts.js": "./fonts.js?v=2026-10-03.17",
+      "./export.js": "./export.js?v=2026-10-03.17",
+      "./storage.js": "./storage.js?v=2026-10-03.17",
+      "./config.js": "./config.js?v=2026-10-03.17",
+      "./paddle.js": "./paddle.js?v=2026-10-03.17",
+      "./reader-worker.js": "./reader-worker.js?v=2026-10-03.17"
     }}
   </script>
-  <script type="module" src="app.js?v=2026-10-03.15"></script>
+  <script type="module" src="app.js?v=2026-10-03.17"></script>
 </head>
 <body>
   <header class="topbar">
@@ -99,6 +99,16 @@
 
   <main class="workspace">
     <div class="stage-area">
+      <div class="stage-tools">
+        <button type="button" id="lockBtn" class="compare-btn lock-btn" data-tip="lockView" data-needs-doc hidden aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+          <span id="lockOff" data-i18n="lockView">Lock screen</span><span id="lockOn" data-i18n="unlockView" hidden>Unlock to edit</span>
+        </button>
+        <button type="button" id="compareBtn" class="compare-btn" data-tip="compare" data-needs-doc hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+          <span data-i18n="holdOriginal">Hold to see original</span>
+        </button>
+      </div>
     <section id="stage" class="stage">
       <label id="emptyState" class="empty" for="fileInput">
         <span class="empty-title" data-i18n="dropTitle">Drop a photo here</span>
@@ -109,10 +119,6 @@
       </label>
       <div id="canvasWrap" class="canvas-wrap" hidden><canvas id="c" lang="zh-Hant-TW"></canvas></div>
     </section>
-      <button type="button" id="compareBtn" class="compare-btn" data-tip="compare" data-needs-doc hidden>
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
-        <span data-i18n="holdOriginal">Hold to see original</span>
-      </button>
       <div id="busy" class="busy" hidden><span id="busyLabel"></span><progress id="busyBar"></progress></div>
     </div>
 
@@ -189,6 +195,14 @@
     </footer>
   </dialog>
 
+  <dialog id="tipsDialog" class="tips-dialog" data-i18n-aria-label="tipsTitle" aria-label="Moving around">
+    <h2 data-i18n="tipsTitle">Moving around while you edit</h2>
+    <ul class="intro-gestures" id="tipsList"></ul>
+    <footer class="tips-foot">
+      <button type="button" id="tipsMute" class="btn link" data-i18n="tipsMute">Don’t show for 30 days</button>
+      <button type="button" id="tipsOk" class="btn primary" data-i18n="tipsOk" autofocus>Got it</button>
+    </footer>
+  </dialog>
   <dialog id="introDialog" class="intro-dialog" data-i18n-aria-label="introTitle" aria-label="Welcome">
     <div class="intro-track" id="introTrack">
       <section class="intro-card">
@@ -209,6 +223,7 @@
           <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5M8.5 11h5M11 8.5v5"/></svg><span data-i18n="intro5Double">Double-tap an empty spot: zoom in there. Double-tap again: the whole poster.</span></li>
           <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4l6 6M4 4v4M4 4h4M20 20l-6-6M20 20v-4M20 20h-4"/></svg><span data-i18n="intro5Pinch">Two fingers: pinch to zoom.</span></li>
           <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg><span data-i18n="intro5Move">To move a text box, tap it and press Move / resize, then drag. Press Done moving to lock it again.</span></li>
+          <li><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg><span data-i18n="intro5Lock">Just looking around? Press Lock screen (top left of the poster): taps won’t select any text until you unlock.</span></li>
         </ul>
       </section>
       <section class="intro-card">
