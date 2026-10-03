@@ -735,9 +735,14 @@ function harmoniseBlocks(items) {
   for (const group of classes.values()) {
     const all = group.flatMap((blk) => blk.members);
     const family = majority(all, (x) => x.o.fontFamily);
-    // Weight is shared only among lines of the same size: a label and its
-    // value (主辦單位 / 臺北市政府文化局) often differ in weight and size.
-    const weightOf = (x) => normalizeWeight(majority(all.filter((y) => Math.max(x.ref, y.ref) / Math.min(x.ref, y.ref) <= 1.08), (y) => normalizeWeight(y.o.fontWeight, family)), family);
+    // Weight: a paragraph's lines share one. Short items share it only at
+    // the same size (within 4%): a bold organisation name above a regular
+    // date (中華民國114年) differs by 8%, a label and its value by 11%.
+    const paraOf = new Map(group.flatMap((blk) => blk.members.map((x) => [x, blk.para ? blk : null])));
+    const weightOf = (x) => {
+      const peers = paraOf.get(x) ? paraOf.get(x).members : all.filter((y) => !paraOf.get(y) && Math.max(x.ref, y.ref) / Math.min(x.ref, y.ref) <= 1.04);
+      return normalizeWeight(majority(peers, (y) => normalizeWeight(y.o.fontWeight, family)), family);
+    };
     const weights = new Map(all.map((x) => [x, weightOf(x)]));
     for (const { members } of group) {
       const fill = majority(members, (x) => x.o.fill);
