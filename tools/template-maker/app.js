@@ -27,11 +27,12 @@ const state = {
   origDirty: false,
   dirty: false,
   home: null, // key of the store this template was last saved to
-  tool: 'select',
   zoom: 'fit',
   stores: { local: new LocalStore(), cloud: null },
   user: null,
 };
+
+const TOUCH = matchMedia('(pointer: coarse)').matches;
 
 const canvas = new fabric.Canvas('c', {
   preserveObjectStacking: true,
@@ -228,9 +229,8 @@ function zoomAround(z, clientX, clientY) {
 // drags a text box by accident (the layout is locked; see applyLock). The
 // browser scrolls it natively, with its own momentum: scrolling the page from
 // script made iPhone Safari's address bar slide in and out mid-gesture, and
-// the screen jumped. Only while a box is unlocked for moving, or an area is
-// being wiped, does the app take the finger over (and scroll from script when
-// the finger is off the box). A tap selects the box under it and opens the pop-up
+// the screen jumped. Only while a box is unlocked for moving does the app take
+// the finger over (and scroll from script when the finger is off the box). A tap selects the box under it and opens the pop-up
 // editor; tapping the selected text again types into it. A double tap on an
 // empty spot zooms in there, and again back to the whole poster. Pinch zooms.
 // A box unlocked with Move / resize is dragged as usual.
@@ -264,14 +264,13 @@ function zoomAround(z, clientX, clientY) {
   const upper = canvas.upperCanvasEl;
   const native = () => upper.style.touchAction !== 'none';
   const syncTouchAction = () => {
-    const own = state.tool !== 'select' || !!canvas.getActiveObject()?.moveUnlocked;
+    const own = !!canvas.getActiveObject()?.moveUnlocked;
     const want = own ? 'none' : 'pan-x pan-y';
     if (upper.style.touchAction !== want) upper.style.touchAction = want;
   };
-  // (TOUCH is declared further down the file.)
-  if (matchMedia('(pointer: coarse)').matches) { canvas.on('after:render', syncTouchAction); syncTouchAction(); }
+  if (TOUCH) { canvas.on('after:render', syncTouchAction); syncTouchAction(); }
   window.addEventListener('pointerdown', (e) => {
-    if (e.pointerType !== 'touch' || state.tool !== 'select' || !hasDoc() || e.target !== canvas.upperCanvasEl) return;
+    if (e.pointerType !== 'touch' || !hasDoc() || e.target !== canvas.upperCanvasEl) return;
     cancelAnimationFrame(glide);
     if (onActiveUnlocked(e)) return; // moving an unlocked box: Fabric's job
     pan = { id: e.pointerId, x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, t0: Date.now(), moved: false, vx: 0, vy: 0, t: Date.now() };
@@ -373,7 +372,7 @@ function resetCanvas(w, h) {
   canvas.discardActiveObject();
   removeObjects(canvas.getObjects());
   canvas.setDimensions({ width: w, height: h });
-  setTool('select');
+  canvas.selection = !TOUCH && !state.viewLock; // no box-select on phones (it grabbed several lines at once)
 }
 
 /* ---------------- History (text objects only) ---------------- */
@@ -460,7 +459,6 @@ async function redo() {
 // On a phone the layout is locked: a finger moves the poster, never a text
 // box by accident (edited text stays where the original was). The pop-up's
 // Move / resize unlocks one box until it is deselected.
-const TOUCH = matchMedia('(pointer: coarse)').matches;
 function applyLock(o) {
   if (!o || o.temp) return;
   const locked = TOUCH && !o.moveUnlocked;
@@ -1116,7 +1114,7 @@ function splitColourRuns(lines) {
     }
     if (!best || best.d < 150 || Math.max(spread(0, best.xs, best.L), spread(best.xs, w, best.R)) > best.d / 3) { out.push(l); continue; }
     const cut = x0 + best.xs;
-    const part = (a, b, box) => ({ ...l, text: chars.slice(a, b).join('').trim(), bbox: box, charConf: l.charConf?.slice(a, b) });
+    const part = (a, b, box) => ({ ...l, text: chars.slice(a, b).join('').trim(), bbox: box, charConf: l.charConf?.slice(a, b), colourRun: true });
     out.push(part(0, best.k, { ...l.bbox, x1: cut }), part(best.k, chars.length, { ...l.bbox, x0: cut }));
   }
   return out.filter((l) => l.text);
@@ -1457,7 +1455,7 @@ async function runDetect() {
       const kind = logos.has(l) ? 'logo'
         : onShape ? 'panel'
           : l.confidence < 50 ? 'unsure'
-            : inkContrast(state.original, l.bbox) < 100 ? 'faint'
+            : !l.colourRun && inkContrast(state.original, l.bbox) < 100 ? 'faint' // a split-off heading stands out by definition
               : looksLikePattern(l, lines) || looksLikePictureText(inkBounds(state.original, l.bbox, { vertical: l.vertical })) ? 'picture' : null;
       if (kind) asks.push({ lines: [l], kind });
     }
@@ -1498,7 +1496,7 @@ async function runDetect() {
     refreshEnabled();
     const nVertical = lines.filter((l) => l.vertical).length;
     toast(lines.length
-      ? `${t(lines.length === 1 ? 'foundOne' : 'foundMany', { n: lines.length })}${nVertical && nVertical < lines.length ? ` ${t('foundVertical', { n: nVertical })}` : ''}`
+      ? `${t((lines.length === 1 ? 'foundOne' : 'foundMany') + (TOUCH ? 'Locked' : ''), { n: lines.length })}${nVertical && nVertical < lines.length ? ` ${t('foundVertical', { n: nVertical })}` : ''}`
       : t('noTextFound'), lines.length ? 'ok' : 'warn', 3500);
   });
   const picked = asks.length ? await askKeepOrConvert(asks) : [];
@@ -1513,6 +1511,7 @@ async function runDetect() {
     renderLayers();
     canvas.requestRenderAll();
   }
+  if (TOUCH) setViewLock(true, { quiet: true }); // phones start locked: look around first, unlock to edit
   maybeShowTips();
 }
 
@@ -1533,6 +1532,13 @@ function addText() {
 
 /* ---------------- Properties panel ---------------- */
 
+// A paragraph whose first line starts after a heading carries leading
+// full-width spaces that place that line on the poster. The editors show the
+// words only and keep those spaces in place when the text changes.
+const INDENT = /^\u3000+/;
+const editableText = (o) => (o.vertical ? fromVertical(o.text) : o.text.replace(INDENT, ''));
+const withIndent = (o, value) => (o.vertical ? toVertical(value) : (o.text.match(INDENT)?.[0] || '') + value.replace(INDENT, ''));
+
 const active = () => {
   const o = canvas.getActiveObject();
   return isText(o) ? o : null;
@@ -1550,7 +1556,8 @@ function renderProps() {
   $('#noSelection').hidden = Boolean(textBox);
   if (!textBox) { renderQuickEdit(); return; }
   const ta = $('#propText');
-  if (document.activeElement !== ta) ta.value = o.vertical ? fromVertical(o.text) : o.text;
+  if (document.activeElement !== ta) ta.value = editableText(o);
+  fitTextArea(ta, 0.6);
   $('#propFont').value = FONTS[o.fontFamily] ? o.fontFamily : DEFAULT_FAMILY;
   renderWeights(o);
   $('#propSize').value = Math.round(o.fontSize * o.scaleY);
@@ -1575,9 +1582,10 @@ async function updateActive(changes, { remeasure = true } = {}) {
 }
 
 $('#propText').addEventListener('input', (e) => {
+  fitTextArea(e.target, 0.6);
   const o = active();
   if (!o) return;
-  updateActive({ text: o.vertical ? toVertical(e.target.value) : e.target.value }).then(() => { refitIfAuto(o); canvas.requestRenderAll(); renderQuickEdit(); });
+  updateActive({ text: withIndent(o, e.target.value) }).then(() => { refitIfAuto(o); canvas.requestRenderAll(); renderQuickEdit(); });
 });
 /** Side panel and pop-up editor share this. A line still filling its original area re-fits to it. */
 async function setFont(family) {
@@ -1617,7 +1625,7 @@ let comparing = false; // Hold to see original is pressed (see setComparing)
 function renderQuickEdit() {
   const box = $('#quickEdit');
   const o = active() || activeImage();
-  if (!o || o.isEditing || transforming || comparing || state.tool !== 'select') { box.hidden = true; return; }
+  if (!o || o.isEditing || transforming || comparing) { box.hidden = true; return; }
   const isImage = o.type === 'image';
   box.classList.toggle('is-image', isImage);
   $('#qeMove').hidden = !TOUCH;
@@ -1625,7 +1633,7 @@ function renderQuickEdit() {
   $('#qeMove').querySelector('span').textContent = t(o.moveUnlocked ? 'moveDone' : 'moveBox');
   if (isImage) { box.hidden = false; positionQuickEdit(); return; }
   const ta = $('#qeText');
-  if (document.activeElement !== ta) ta.value = o.vertical ? fromVertical(o.text) : o.text;
+  if (document.activeElement !== ta) ta.value = editableText(o);
   if (document.activeElement !== $('#qeSize')) $('#qeSize').value = Math.round(o.fontSize * o.scaleY);
   $('#qeColor').value = $('#propColor').value;
   $('#qeFont').value = FONTS[o.fontFamily] ? o.fontFamily : DEFAULT_FAMILY;
@@ -1633,6 +1641,7 @@ function renderQuickEdit() {
   $('#qeVertical').setAttribute('aria-pressed', String(Boolean(o.vertical)));
   $('#qeKeep').hidden = !o.eraseBox;
   box.hidden = false;
+  fitTextArea(ta); // measured once shown
   positionQuickEdit();
 }
 
@@ -1676,9 +1685,23 @@ const resizeBy = (factor) => {
   const next = Math.max(4, Math.round(factor > 1 ? Math.max(now + 1, now * factor) : Math.min(now - 1, now * factor)));
   updateActive({ fontSize: next, scaleX: 1, scaleY: 1, autoFit: false }).then(renderProps);
 };
+// The text boxes in the pop-up and the side panel show at least four lines and
+// grow to show a whole paragraph, up to 40% of the visible screen in the pop-up
+// (60% in the roomier side panel); longer text scrolls inside. Two fixed lines
+// made a paragraph look like two lines.
+function fitTextArea(ta, share = 0.4) {
+  const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+  const cs = getComputedStyle(ta);
+  const line = parseFloat(cs.lineHeight) || 1.4 * parseFloat(cs.fontSize); // 'normal' has no number
+  const fourLines = 4 * line + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + 2;
+  ta.style.height = 'auto';
+  ta.style.height = `${Math.min(Math.max(ta.scrollHeight + 2, fourLines), Math.max(fourLines, share * vh))}px`;
+}
 $('#qeText').addEventListener('input', (e) => {
+  fitTextArea(e.target);
+  positionQuickEdit();
   const o = active();
-  if (o) updateActive({ text: o.vertical ? toVertical(e.target.value) : e.target.value }).then(() => { refitIfAuto(o); canvas.requestRenderAll(); renderProps(); });
+  if (o) updateActive({ text: withIndent(o, e.target.value) }).then(() => { refitIfAuto(o); canvas.requestRenderAll(); renderProps(); });
 });
 $('#qeSmaller').addEventListener('click', () => resizeBy(1 / 1.1));
 $('#qeBigger').addEventListener('click', () => resizeBy(1.1));
@@ -1701,6 +1724,9 @@ $('#qeMove').addEventListener('click', () => {
   applyLock(o);
   canvas.requestRenderAll();
   renderQuickEdit();
+  // Unlocked: step aside so the box and its handles are free to drag (the
+  // pop-up comes back after the move), and say what to do.
+  if (o.moveUnlocked) { $('#quickEdit').hidden = true; toast(t('moveHint'), 'info', 4000); }
 });
 $('#qeReplace').addEventListener('click', () => {
   const o = activeImage();
@@ -1816,7 +1842,7 @@ function setComparing(on) {
 function setViewLock(on, { quiet = false } = {}) {
   state.viewLock = on;
   canvas.skipTargetFind = on;
-  canvas.selection = !on && state.tool === 'select' && !TOUCH;
+  canvas.selection = !on && !TOUCH; // no box-select on phones (it grabbed several lines at once)
   canvas.discardActiveObject();
   canvas.requestRenderAll();
   renderQuickEdit();
@@ -1828,75 +1854,6 @@ function setViewLock(on, { quiet = false } = {}) {
   if (!quiet) toast(t(on ? 'lockedToast' : 'unlockedToast'), 'info', 2500);
 }
 $('#lockBtn').addEventListener('click', () => setViewLock(!state.viewLock));
-
-/* ---------------- Erase tool ---------------- */
-
-let drag = null;
-function setTool(tool) {
-  state.tool = tool;
-  $('#eraseBtn').classList.toggle('active', tool === 'erase');
-  $('#stage').classList.toggle('erasing', tool === 'erase');
-  const selecting = tool === 'select';
-  canvas.selection = selecting && !TOUCH && !state.viewLock; // no box-select on phones (it grabbed several lines at once)
-  canvas.discardActiveObject();
-  canvas.getObjects().forEach((o) => { o.selectable = selecting; o.evented = selecting; });
-  canvas.defaultCursor = selecting ? 'default' : 'crosshair';
-  canvas.requestRenderAll();
-}
-
-canvas.on('mouse:down', (opt) => {
-  if (state.tool !== 'erase') return;
-  const p = canvas.getScenePoint(opt.e);
-  const rect = new fabric.Rect({
-    originX: 'left', originY: 'top', left: p.x, top: p.y, width: 1, height: 1,
-    fill: 'rgba(37,99,235,0.15)', stroke: '#2563eb', strokeDashArray: [6, 4], strokeWidth: 2,
-    strokeUniform: true, selectable: false, evented: false, excludeFromExport: true, temp: true,
-  });
-  history.paused = true;
-  canvas.add(rect);
-  history.paused = false;
-  drag = { start: p, rect };
-});
-canvas.on('mouse:move', (opt) => {
-  if (!drag) return;
-  const p = canvas.getScenePoint(opt.e);
-  drag.rect.set({
-    left: Math.min(p.x, drag.start.x), top: Math.min(p.y, drag.start.y),
-    width: Math.abs(p.x - drag.start.x), height: Math.abs(p.y - drag.start.y),
-  });
-  canvas.requestRenderAll();
-});
-canvas.on('mouse:up', () => {
-  if (!drag) return;
-  const { left, top, width, height } = drag.rect;
-  history.paused = true;
-  canvas.remove(drag.rect);
-  history.paused = false;
-  drag = null;
-  if (width < 3 || height < 3) return;
-  wipeArea({ x0: left, y0: top, x1: left + width, y1: top + height });
-});
-
-/**
- * Wipe an area: every text or image box mostly inside it is removed, and the
- * photo there is painted with the colours around it. One step for Undo.
- */
-function wipeArea(box) {
-  const inside = (o) => {
-    const r = o.getBoundingRect();
-    const ix = Math.min(r.left + r.width, box.x1) - Math.max(r.left, box.x0);
-    const iy = Math.min(r.top + r.height, box.y1) - Math.max(r.top, box.y0);
-    return ix > 0 && iy > 0 && ix * iy >= 0.6 * r.width * r.height;
-  };
-  history.paused = true;
-  const gone = canvas.getObjects().filter((o) => !o.temp && inside(o));
-  if (gone.length) canvas.remove(...gone);
-  const patch = patchBackground(box, () => eraseBox(state.clean, box, 0));
-  history.paused = false;
-  pushHistory(patch);
-  refreshEnabled();
-}
-
 
 /* ---------------- New / open / save ---------------- */
 
@@ -2051,6 +2008,7 @@ async function openRecord(rec, homeKey) {
   state.dirty = !homeKey;
   updateTitle();
   refreshEnabled();
+  if (TOUCH) setViewLock(true, { quiet: true }); // phones start locked: look around first, unlock to edit
   maybeShowTips();
   applyZoom();
 }
@@ -2331,12 +2289,6 @@ function init() {
   });
   $('#detectBtn').addEventListener('click', runDetect);
   $('#addTextBtn').addEventListener('click', addText);
-  $('#eraseBtn').addEventListener('click', () => {
-    setTool(state.tool === 'erase' ? 'select' : 'erase');
-    if (state.tool === 'erase') toast(t('eraseHint'), 'info', 5000);
-    // On phones the panel is under the photo: bring the photo up to drag on.
-    if (state.tool === 'erase' && matchMedia('(max-width: 760px)').matches) $('#stage').scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
   $('#undoBtn').addEventListener('click', undo);
   $('#redoBtn').addEventListener('click', redo);
   $('#saveBtn').addEventListener('click', save);
@@ -2388,7 +2340,6 @@ function init() {
     if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); (e.shiftKey ? redo : undo)(); return; }
     if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
     if ((e.key === 'Delete' || e.key === 'Backspace') && (active() || activeImage())) { e.preventDefault(); canvas.remove(active() || activeImage()); }
-    if (e.key === 'Escape' && state.tool !== 'select') setTool('select');
   });
   window.addEventListener('beforeunload', (e) => { if (state.dirty) e.preventDefault(); });
   let fontWarned = false;

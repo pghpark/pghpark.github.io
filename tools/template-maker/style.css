@@ -250,7 +250,6 @@ dialog header [data-close]:active { transform: translateY(3px); box-shadow: inse
 }
 .stage > .canvas-wrap, .stage > .empty { margin: auto; flex-shrink: 0; }
 .stage.dragging { outline: 3px dashed var(--accent); outline-offset: -12px; }
-.stage.erasing .canvas-container { cursor: crosshair; }
 .canvas-wrap { box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2); background: #fff; line-height: 0; }
 .empty {
   display: flex;
@@ -468,8 +467,6 @@ dialog form, dialog > p { padding: 12px 16px; margin: 0; }
 .zoom-field select { min-height: 44px; font-weight: 600; border: 1.5px solid color-mix(in srgb, var(--accent) 40%, var(--line)); box-shadow: 0 3px 0 color-mix(in srgb, var(--accent) 30%, var(--line)); border-radius: var(--radius); }
 .quick-edit.offscreen { visibility: hidden; }
 .btn.grow { flex: 1; }
-.wipe-btn { gap: 8px; min-height: 44px; font-weight: 600; }
-.wipe-btn .ico { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .toolbar-sep { width: 1px; align-self: stretch; margin: 4px 2px; background: var(--line); flex-shrink: 0; }
 
 /* Help tooltips (data-tip) */
@@ -548,14 +545,15 @@ h2[data-tip], .field[data-tip] > span:first-child, .check[data-tip] > span, .men
   display: block;
   width: 100%;
   min-height: 44px;
-  max-height: 30vh;
+  max-height: 40vh; /* grows with its text; see fitTextArea */
   padding: 6px 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--bg);
   color: var(--text);
   font: 16px/1.4 "Noto Sans TC", system-ui, sans-serif; /* 16px stops iOS zooming in on focus */
-  resize: vertical;
+  resize: none;
+  overflow-y: auto;
 }
 .qe-row { display: flex; align-items: center; gap: 4px; margin-top: 6px; }
 /* An image box (new QR code or logo): only Replace and Delete apply. */
