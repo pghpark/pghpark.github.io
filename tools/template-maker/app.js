@@ -1047,6 +1047,7 @@ function splitColourRuns(lines) {
       // before an opening bracket. Never inside a word or number (a gradient
       // "2025" is one piece of text).
       if (!/[》」』）】〉〕)\]：:｜|]/.test(chars[k - 1]) && !/[《「『（【〈〔(\[]/.test(chars[k])) continue;
+      if (/[：:]/.test(chars[k - 1]) && /\d/.test(chars[k - 2]) && /\d/.test(chars[k])) continue; // a time (14:00)
       const xs = Math.round((acc / total) * w);
       const L = mean(0, xs); const R = mean(xs, w);
       if (!L || !R || L[3] < 20 || R[3] < 20) continue;
