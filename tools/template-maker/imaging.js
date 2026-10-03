@@ -146,15 +146,28 @@ export function eraseText(canvas, box, pad = 3, colors = null) {
   const bg = colors?.bg || sampleRing(canvas, box, pad);
   const fg = colors?.fg || textRGB(canvas, box, bg);
   if (!fg) { eraseBox(canvas, box, pad); return; }
-  const grow = Math.min(3, Math.max(1, Math.round((box.y1 - box.y0) * 0.04)));
+  let grow = Math.min(3, Math.max(1, Math.round((box.y1 - box.y0) * 0.04)));
   const r = clampRect(canvas, box.x0 - pad - grow - 1, box.y0 - pad - grow - 1, box.x1 + pad + grow + 1, box.y1 + pad + grow + 1);
   const w = r.x1 - r.x0;
   const h = r.y1 - r.y0;
   if (w <= 2 || h <= 2) return;
   const img = ctx.getImageData(r.x0, r.y0, w, h);
   const d = img.data;
-  const dist = (i, c) => Math.abs(d[i] - c[0]) + Math.abs(d[i + 1] - c[1]) + Math.abs(d[i + 2] - c[2]);
-  // 1. Text pixels inside the padded box (never the outer 1px frame, which seeds the fill).
+  // How far a pixel lies along the blend from the background to the text
+  // colour (0 = background, 1 = text), and how far off that blend it is.
+  // Letter edges are blends of the two; artwork in other colours is off it.
+  const ab = [fg[0] - bg[0], fg[1] - bg[1], fg[2] - bg[2]];
+  const ab2 = Math.max(1, ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2]);
+  const blend = (i) => {
+    const p0 = d[i] - bg[0]; const p1 = d[i + 1] - bg[1]; const p2 = d[i + 2] - bg[2];
+    const t = (p0 * ab[0] + p1 * ab[1] + p2 * ab[2]) / ab2;
+    const off = Math.hypot(p0 - t * ab[0], p1 - t * ab[1], p2 - t * ab[2]) / Math.sqrt(ab2);
+    // Strongly toward the text colour, JPEG colour fringes may stray further off.
+    return off < (t >= 0.35 ? 0.5 : 0.35) ? t : 0;
+  };
+  // 1. Text pixels inside the padded box (never the outer 1px frame, which
+  //    seeds the fill), including the soft edges of small letters: anything
+  //    at least a fifth of the way from background to text colour.
   let mask = new Uint8Array(w * h);
   const bx0 = Math.max(1, Math.floor(box.x0 - pad - r.x0));
   const by0 = Math.max(1, Math.floor(box.y0 - pad - r.y0));
@@ -163,16 +176,19 @@ export function eraseText(canvas, box, pad = 3, colors = null) {
   for (let y = by0; y < by1; y++) {
     for (let x = bx0; x < bx1; x++) {
       const i = (y * w + x) * 4;
-      if (dist(i, fg) < dist(i, bg)) mask[y * w + x] = 1;
+      if (blend(i) > 0.2) mask[y * w + x] = 1;
     }
   }
-  // 2. Grow the mask to cover anti-aliased edges.
-  for (let g = 0; g < grow; g++) {
+  // 2. Grow the mask through the faint tint around the letters (still blends,
+  //    so neighbouring artwork isn't swallowed; up to 4 px), then one more
+  //    pixel all round, so the fill below only borrows clean background.
+  grow = Math.max(grow, 4);
+  for (let g = 0; g < grow + 1; g++) {
     const next = mask.slice();
     for (let y = 1; y < h - 1; y++) {
       for (let x = 1; x < w - 1; x++) {
         const k = y * w + x;
-        if (!mask[k] && (mask[k - 1] || mask[k + 1] || mask[k - w] || mask[k + w])) next[k] = 1;
+        if (!mask[k] && (mask[k - 1] || mask[k + 1] || mask[k - w] || mask[k + w]) && (g === grow || blend(k * 4) > 0.05)) next[k] = 1;
       }
     }
     mask = next;
