@@ -758,6 +758,53 @@ function harmoniseBlocks(items) {
       }
     }
   }
+  return [...blocks.values()].map((members) => members.map((x) => x.o));
+}
+
+/**
+ * A paragraph or block whose lines ended up in one font, weight, size and
+ * colour becomes one multi-line text box, edited as a whole. Its lines are
+ * stacked (not side by side); line spacing comes from the original baselines,
+ * alignment from whichever edges line up (left, centre or right). The first
+ * line stays exactly where it was fitted. Returns the objects to add.
+ */
+function mergeParagraphs(objs, blocks) {
+  const out = new Set(objs);
+  for (const block of blocks) {
+    if (block.length < 2) continue;
+    const rows = [...block].sort((a, b) => a.fitBox.y0 - b.fitBox.y0);
+    const f = rows[0];
+    const same = rows.every((o) => o.fontFamily === f.fontFamily && Number(o.fontWeight) === Number(f.fontWeight)
+      && o.fill === f.fill && Math.abs(o.fontSize - f.fontSize) < 0.01 && !o.vertical && !o.text.includes('\n'));
+    // Stacked: each line starts below the previous one's middle.
+    const stacked = rows.every((o, i) => i === 0 || o.fitBox.y0 >= (rows[i - 1].fitBox.y0 + rows[i - 1].fitBox.y1) / 2);
+    if (!same || !stacked) continue;
+    const fs = f.fontSize;
+    const base = rows.map((o) => o.top + BASELINE * fs); // each fitted line's baseline
+    const steps = rows.slice(1).map((o, i) => base[i + 1] - base[i]).sort((a, b) => a - b);
+    const lineHeight = Math.min(3, Math.max(0.5, steps[steps.length >> 1] / (1.13 * fs)));
+    const med = (vals) => [...vals].sort((a, b) => a - b)[vals.length >> 1];
+    const spread = (vals) => Math.max(...vals) - Math.min(...vals);
+    const lefts = rows.map((o) => o.left); const rights = rows.map((o) => o.left + o.width); const mids = rows.map((o) => o.left + o.width / 2);
+    const align = spread(lefts) <= Math.min(spread(mids), spread(rights)) + 0.3 * fs ? 'left'
+      : spread(mids) <= spread(rights) ? 'center' : 'right';
+    const union = (key) => ({
+      x0: Math.min(...rows.map((o) => o[key].x0)), y0: Math.min(...rows.map((o) => o[key].y0)),
+      x1: Math.max(...rows.map((o) => o[key].x1)), y1: Math.max(...rows.map((o) => o[key].y1)),
+    });
+    const para = newText(rows.map((o) => o.text).join('\n'), {
+      fontFamily: f.fontFamily, fontWeight: f.fontWeight, fill: f.fill, fontSize: fs, ocr: true,
+      lineHeight, textAlign: align, charSpacing: med(rows.map((o) => o.charSpacing || 0)),
+    });
+    para.initDimensions();
+    const left = align === 'left' ? med(lefts) : align === 'center' ? med(mids) - para.width / 2 : med(rights) - para.width;
+    para.set({ left, top: f.top, eraseBox: union('eraseBox'), fitBox: union('fitBox'), autoFit: false });
+    para.ocrBox = union('ocrBox');
+    para.setCoords();
+    for (const o of rows) out.delete(o);
+    out.add(para);
+  }
+  return [...out];
 }
 
 /** After the text of a detected line changes, re-fit it to the original area (unless the user sized it). */
@@ -853,7 +900,7 @@ async function convertLines(lines) {
   const built = fitted.map((l) => textFromLine(l, l.badge ? hexOf(l.badge.ink) : l.panel ? hexOf(l.panel.text) : textColorByContrast(l.src, l.bbox, l.vertical)));
   await ensureFontsLoaded(built.map((b) => b.obj));
   built.forEach((b) => b.fit(b.obj));
-  harmoniseBlocks(built.map((b, i) => ({ o: b.obj, line: fitted[i] })));
+  const blocks = harmoniseBlocks(built.map((b, i) => ({ o: b.obj, line: fitted[i] })));
   built.forEach((b, i) => {
     b.obj.ocrBox = fitted[i].bbox; // for checking the fit; not saved
     const e = lines[i].bbox;
@@ -881,7 +928,7 @@ async function convertLines(lines) {
   }
   releaseCanvas(noDiscs);
   freeScratch();
-  return built.map((b) => b.obj);
+  return mergeParagraphs(built.map((b) => b.obj), blocks);
 }
 
 /**
