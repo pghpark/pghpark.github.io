@@ -30,7 +30,9 @@ It installs like an app, without an app store:
 - **iPhone / iPad:** open https://pghpark.github.io/tools/template-maker/ in **Safari**, tap **Share** (on newer iPhones **•••** first) → **View More** if needed → **Add to Home Screen** → **Add**.
 - **Android:** open the same link in **Chrome**, tap **⋮** → **Install app** (or **Add to Home screen**).
 
-On the first visit the app shows these steps with pictures for the phone in use (with an **Install now** button where Chrome or Edge offer their own prompt). After that, the small **Install on Home Screen** button at the top right shows them again. Neither appears when the app is already opened from its Home Screen icon.
+On the very first visit, a short intro comes first: four swipe cards (photo → editable template with a before/after of a sample poster, the keep-or-convert questions, export formats, privacy and the one-time 46 MB download), with **Try a sample poster** (first visit only; `sample/poster.jpg`, made up by us, organiser and venue fictional) and **Get started**. **About Template Maker** at the bottom of the panel shows the cards again.
+
+Then the app shows these steps with pictures for the phone in use (with an **Install now** button where Chrome or Edge offer their own prompt). After that, the small **Install on Home Screen** button at the top right shows them again. Neither appears when the app is already opened from its Home Screen icon.
 
 It then opens full screen from its icon (範本製作器). Templates saved in the browser are stored per app: on iPhone the Home Screen app keeps its own, separate from Safari's, so save a template again (or export it as .template.json and open it) to have it in both. Files: `manifest.webmanifest` and `icons/`.
 

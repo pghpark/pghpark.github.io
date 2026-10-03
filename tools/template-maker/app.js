@@ -2082,6 +2082,7 @@ if ('serviceWorker' in navigator) {
     try { sessionStorage.setItem('tm-isolated', '1'); } catch { return; }
     location.reload();
   };
+  self.templateMakerIsolate = isolateOnce; // tried again when the intro closes
   if (navigator.serviceWorker.controller) isolateOnce();
   else navigator.serviceWorker.addEventListener('controllerchange', isolateOnce, { once: true });
 }
@@ -2117,14 +2118,66 @@ $('#installNow').addEventListener('click', async () => {
   installPrompt = null;
   if (prompt) { prompt.prompt(); await prompt.userChoice.catch(() => {}); }
 });
-// First visit only, shortly after the page opens (never over a photo being loaded).
-if (!standalone()) {
-  setTimeout(() => {
-    if (hasDoc() || !$('#busy').hidden || document.querySelector('dialog[open]')) return;
-    try { if (localStorage.getItem('tm-install-shown')) return; localStorage.setItem('tm-install-shown', '1'); } catch { return; }
-    showInstall();
-  }, 2500);
+// First visit only (after the intro), never over a photo being loaded.
+function maybeShowInstall() {
+  if (standalone() || hasDoc() || !$('#busy').hidden || document.querySelector('dialog[open]')) return;
+  try { if (localStorage.getItem('tm-install-shown')) return; localStorage.setItem('tm-install-shown', '1'); } catch { return; }
+  showInstall();
 }
+
+/* ---------------- First-visit intro (swipe cards) ---------------- */
+
+const introCards = () => [...$('#introTrack').children];
+function introIndex() {
+  const track = $('#introTrack');
+  return Math.round(track.scrollLeft / Math.max(1, track.clientWidth));
+}
+function renderIntroNav() {
+  const i = introIndex();
+  const last = i >= introCards().length - 1;
+  $('#introDots').querySelectorAll('i').forEach((d, k) => d.classList.toggle('on', k === i));
+  $('#introNext').textContent = t(last ? 'introStart' : 'introNext');
+}
+/** `first`: the first visit, which also offers the sample poster. */
+function showIntro({ first = false } = {}) {
+  const dlg = $('#introDialog');
+  $('#introSample').hidden = !first;
+  dlg.showModal();
+  $('#introTrack').scrollLeft = 0;
+  renderIntroNav();
+}
+function closeIntro() {
+  const dlg = $('#introDialog');
+  if (!dlg.open) return;
+  dlg.close();
+  try { localStorage.setItem('tm-intro-seen', '1'); } catch { /* storage blocked */ }
+  self.templateMakerIsolate?.();
+  setTimeout(maybeShowInstall, 400);
+}
+$('#introTrack').addEventListener('scroll', () => requestAnimationFrame(renderIntroNav), { passive: true });
+$('#introNext').addEventListener('click', () => {
+  const i = introIndex();
+  if (i >= introCards().length - 1) { closeIntro(); return; }
+  $('#introTrack').scrollTo({ left: (i + 1) * $('#introTrack').clientWidth, behavior: 'smooth' });
+});
+$('#introSkip').addEventListener('click', closeIntro);
+$('#introDialog').addEventListener('cancel', (e) => { e.preventDefault(); closeIntro(); });
+$('#introSample').addEventListener('click', async () => {
+  closeIntro();
+  try {
+    const blob = await (await fetch('sample/poster.jpg')).blob();
+    newFromFile(new File([blob], `${t('sampleName')}.jpg`, { type: 'image/jpeg' }));
+  } catch (e) { toast(t('errReadImage'), 'error'); }
+});
+$('#aboutBtn').addEventListener('click', () => showIntro());
+document.addEventListener('langchange', () => { if ($('#introDialog').open) renderIntroNav(); });
+setTimeout(() => {
+  let seen = true;
+  try { seen = Boolean(localStorage.getItem('tm-intro-seen')); } catch { /* storage blocked: skip the intro */ }
+  if (!seen && !hasDoc() && $('#busy').hidden) showIntro({ first: true });
+  else maybeShowInstall();
+}, seenDelay());
+function seenDelay() { try { return localStorage.getItem('tm-intro-seen') ? 2500 : 600; } catch { return 2500; } }
 
 // Handy for debugging from the console.
 window.templateMaker = { canvas, state, debug: { matchFont, renderedMask, maskSimilarity, inkDensity, guessWeight } };
