@@ -975,6 +975,7 @@ async function placeImage(region, file, replacing = null) {
   canvas.requestRenderAll();
   pushHistory();
   refreshEnabled();
+  return img;
 }
 
 /** Run an export with backgroundWithImages(), freeing the copy afterwards. */
@@ -1034,10 +1035,15 @@ function groupLogoPieces(asks) {
 function askKeepOrConvert(items) {
   const dlg = $('#askDialog');
   const snip = $('#askSnip');
-  const picked = [];
+  // Each answer, so ← Back can undo it: 'keep', 'convert', or the placed image box.
+  const answers = [];
   let i = 0;
   return new Promise((resolve) => {
-    const finish = () => { dlg.close(); releaseCanvas(snip); resolve(picked); };
+    const finish = () => {
+      dlg.close();
+      releaseCanvas(snip);
+      resolve(answers.flatMap((a, k) => (a === 'convert' ? items[k].lines : [])));
+    };
     const show = () => {
       if (i >= items.length) { finish(); return; }
       const { lines, kind, region } = items[i];
@@ -1051,6 +1057,7 @@ function askKeepOrConvert(items) {
       $('#askKeep').textContent = t(region ? 'askKeepImage' : 'askKeep');
       $('#askConvert').textContent = t(region ? 'askImport' : 'askConvert');
       $('#askRest').hidden = i === items.length - 1;
+      $('#askBack').hidden = i === 0;
       // The original around the text, with a little margin, at most 640 × 320.
       const b = region || unionBox(lines);
       const m = Math.max(6, 0.4 * Math.min(b.x1 - b.x0, b.y1 - b.y0));
@@ -1063,14 +1070,25 @@ function askKeepOrConvert(items) {
       g.drawImage(state.original, x0, y0, x1 - x0, y1 - y0, 0, 0, snip.width, snip.height);
       if (!dlg.open) dlg.showModal();
     };
-    $('#askKeep').onclick = () => { i++; show(); };
+    const answer = (a) => { answers[i] = a; i++; show(); };
+    $('#askKeep').onclick = () => answer('keep');
     $('#askConvert').onclick = () => {
       const { region } = items[i];
-      if (!region) { picked.push(...items[i].lines); i++; show(); return; }
+      if (!region) { answer('convert'); return; }
       // Import: on to the next question once an image is chosen (cancelling stays here).
       pickImage(async (file) => {
-        if (await withBusy(t('placingImage'), () => placeImage(region, file).then(() => true))) { i++; show(); }
+        const img = await withBusy(t('placingImage'), () => placeImage(region, file));
+        if (img) answer(img);
       });
+    };
+    // Back to the previous question, undoing its answer (an imported image is
+    // removed and the original under it put back).
+    $('#askBack').onclick = () => {
+      if (i === 0) return;
+      i--;
+      const a = answers.pop();
+      if (a && typeof a === 'object') { canvas.remove(a); undoErase(); }
+      show();
     };
     $('#askRest').onclick = finish;
     dlg.oncancel = (e) => { e.preventDefault(); finish(); }; // Esc: keep the rest

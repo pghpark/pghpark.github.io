@@ -560,5 +560,7 @@ h2[data-tip], .field[data-tip] > span:first-child, .check[data-tip] > span, .men
   box-shadow: 0 4px 0 color-mix(in srgb, var(--accent) 35%, var(--line));
 }
 .ask-btn:active:not(:disabled) { transform: translateY(4px); box-shadow: 0 0 0 transparent, inset 0 3px 8px rgba(0, 0, 0, 0.3); }
-.ask-rest { text-align: center; margin: 0 0 12px; }
+.ask-rest { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 16px 14px; }
+.ask-rest #askRest:only-child, .ask-rest #askBack[hidden] + #askRest { margin-left: auto; margin-right: auto; }
+.ask-back { min-height: 44px; padding: 8px 16px; font-size: 16px; font-weight: 600; }
 .art-dialog footer { justify-content: flex-end; gap: 8px; }
