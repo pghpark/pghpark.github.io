@@ -60,20 +60,26 @@ body {
   flex: 1 1 160px;
   min-width: 120px;
   max-width: 360px;
-  padding: 6px 8px;
-  border: 1px solid transparent;
+  min-height: 40px;
+  /* A visible field with a pencil, so it's clear the template can be named here. */
+  padding: 7px 10px 7px 36px;
+  border: 1.5px solid var(--line);
   border-radius: var(--radius);
-  background: transparent;
+  background: var(--bg) no-repeat 11px 50% / 18px 18px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238a8f98' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 20h9'/%3E%3Cpath d='M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z'/%3E%3C/svg%3E");
   color: inherit;
   font: inherit;
+  font-weight: 600;
 }
-.doc-name:hover, .doc-name:focus { border-color: var(--line); outline: none; }
+.doc-name::placeholder { color: var(--muted); font-weight: 400; }
+.doc-name:hover:not(:disabled) { border-color: var(--accent); }
+.doc-name:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+.doc-name:disabled { opacity: 0.6; }
+.row-break { display: none; }
 .actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-left: auto; }
 /* Install on Home Screen: small, at the top right (hidden once installed). */
-.topbar .install-btn { order: 1; margin-left: auto; gap: 6px; padding: 5px 12px; border-radius: 999px; font-size: 14px; font-weight: 600; border-color: var(--accent); color: var(--accent); }
-.topbar .install-btn .ico { width: 18px; height: 18px; }
-.install-btn ~ .doc-name { order: 0; }
-.topbar > .actions { order: 2; }
+/* Install on Home Screen: a small button beside About (hidden once installed). */
+.about .install-btn { gap: 6px; padding: 5px 12px; border-radius: 999px; font-size: 14px; font-weight: 600; border-color: var(--accent); color: var(--accent); }
+.about .install-btn .ico { width: 18px; height: 18px; }
 /* First-visit intro: swipe cards */
 .intro-dialog { width: min(560px, calc(100vw - 24px)); max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px); padding: 0; border: 0; border-radius: 18px; background: var(--panel); color: var(--text); overflow: hidden; }
 .intro-dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
@@ -102,7 +108,7 @@ body {
 .intro-foot { display: flex; align-items: center; gap: 8px; padding: 10px 16px 16px; }
 .intro-foot .intro-next { margin-left: auto; min-height: 48px; padding: 10px 22px; font-size: 17px; font-weight: 700; }
 #introSample { min-height: 48px; font-weight: 600; }
-.about { text-align: center; }
+.about { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px; }
 .install-steps { list-style: none; counter-reset: step; margin: 12px 0 0; padding: 0; display: grid; gap: 10px; }
 .install-steps li { counter-increment: step; display: grid; grid-template-columns: 28px 48px 1fr; align-items: center; gap: 10px; font-size: 16px; line-height: 1.4; }
 .install-steps li::before { content: counter(step); display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--accent-text); font-weight: 700; font-size: 14px; }
@@ -367,7 +373,9 @@ dialog form, dialog > p { padding: 12px 16px; margin: 0; }
   .toolbar { padding: 8px 12px 4px; gap: 6px; }
   .toolbar .btn.big { min-width: 0; padding: 8px 4px; font-size: 16px; }
   .toolbar-sep { display: none; }
-  .doc-name { flex-basis: 90px; min-width: 90px; } /* leaves room for Install on Home Screen beside it */
+  /* Phones: the name gets its own row under the app name. */
+  .row-break { display: block; flex-basis: 100%; height: 0; }
+  .doc-name { flex-basis: 100%; min-width: 0; max-width: none; }
   .zoom-field select { max-width: 96px; padding-left: 6px; padding-right: 4px; }
   .zoom-label { display: none; } /* the menu itself shows Fit / 100%… */
   .workspace { flex-direction: column; }

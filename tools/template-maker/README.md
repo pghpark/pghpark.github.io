@@ -32,7 +32,7 @@ It installs like an app, without an app store:
 
 On the very first visit, a short intro comes first: four swipe cards (photo → editable template with a before/after of a sample poster, the keep-or-convert questions, export formats, privacy and the one-time 46 MB download), with **Try a sample poster** (first visit only; `sample/poster.jpg`, made up by us, organiser and venue fictional) and **Get started**. **About Template Maker** at the bottom of the panel shows the cards again.
 
-Then the app shows these steps with pictures for the phone in use (with an **Install now** button where Chrome or Edge offer their own prompt). After that, the small **Install on Home Screen** button at the top right shows them again. Neither appears when the app is already opened from its Home Screen icon.
+Then the app shows these steps with pictures for the phone in use (with an **Install now** button where Chrome or Edge offer their own prompt). After that, the small **Install on Home Screen** button beside **About Template Maker** at the bottom of the side panel shows them again. Neither appears when the app is already opened from its Home Screen icon.
 
 It then opens full screen from its icon (範本製作器). Templates saved in the browser are stored per app: on iPhone the Home Screen app keeps its own, separate from Safari's, so save a template again (or export it as .template.json and open it) to have it in both. Files: `manifest.webmanifest` and `icons/`.
 
@@ -67,7 +67,7 @@ detection, use a sharp, well-lit photo taken straight on, with printed (not hand
 
 ## What it does
 
-1. **Upload a photo** (the **Upload a photo** button, drag-and-drop, or paste). Photos keep full detail up to 4096 px on the long side on a computer and 2400 px on a phone (to stay within iPhone Safari's memory; ample for text).
+1. **Upload a photo** (the **Upload a photo** button, drag-and-drop, or paste). The name field under the app name (with the pencil) starts as the photo's file name; edit it there, and saving and exporting use that name. Photos keep full detail up to 4096 px on the long side on a computer and 2400 px on a phone (to stay within iPhone Safari's memory; ample for text).
 2. **Find and read every piece of text** with [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) PP-OCRv6 Small (Apache-2.0), running in the browser through ONNX Runtime Web (see *How text is found* below).
 3. **Ask about the doubtful parts**, one at a time, with a cut-out of the original and two big buttons (see *Keep or convert* below). Everything else is converted straight away.
 4. **Remove the original text** from the background. Only the letter strokes are repainted, from the pixels around them, so artwork behind or next to the text isn't smeared. A pixel counts as part of a letter when it lies on the blend from the background colour to the text colour (at least a fifth of the way), which includes the soft edges of small letters that used to leave a faint grey haze; the erased area then grows through the faint tint around the letters (up to 4 px, still only blends) so the fill borrows clean background. Artwork in other colours is off that blend and stays. Hold **Hold to see original** to compare with the untouched photo.
