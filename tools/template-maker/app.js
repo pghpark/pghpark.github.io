@@ -677,17 +677,20 @@ function textFromLine(line, color) {
       const match = matchFont(line.text, line.mask);
       if (match) o.set({ fontFamily: match.family });
       const approx = (bh * 100) / Math.max(inkAt100(line.text, o).height, 1);
-      if (line.bbox.density && weightsOf(o.fontFamily).length > 1) {
-        o.set({ fontWeight: guessWeight(line.text, o.fontFamily, approx, line.bbox.density) });
-      } else if (line.bbox.density && guessWeight(line.text, DEFAULT_FAMILY, approx, line.bbox.density) >= 900) {
+      const density = line.bbox.density;
+      if (density && weightsOf(o.fontFamily).length > 1) {
+        o.set({ fontWeight: guessWeight(line.text, o.fontFamily, approx, density) });
+      } else if (density && guessWeight(line.text, DEFAULT_FAMILY, approx, density) >= 900) {
         // Very heavy strokes, but the closest-shaped font has one regular
         // weight: the weight matters more to the look, so use the default
         // family at Black. (Plain bold stays: rounded fonts read as bold.)
-        o.set({ fontFamily: DEFAULT_FAMILY, fontWeight: guessWeight(line.text, DEFAULT_FAMILY, approx, line.bbox.density) });
+        o.set({ fontFamily: DEFAULT_FAMILY, fontWeight: guessWeight(line.text, DEFAULT_FAMILY, approx, density) });
       } else {
         o.set({ fontWeight: 400 });
       }
-      // Remember the original letters' area so edits can re-fit to it.
+      // Remember the original letters' area so edits can re-fit to it, and
+      // how much gap its characters leave (see fitToBox).
+      if (line.mask) { o.photoGap = emptyColumnShare(line.mask.data, line.mask.w, line.mask.h); o.photoGapText = line.text; }
       o.set({ fitBox: { x0, y0, x1, y1 }, autoFit: true });
       fitToBox(o);
     },
@@ -701,6 +704,25 @@ function textFromLine(line, color) {
  * digits instead of enlarging them. Squeezing is limited to −8% of a
  * character; past that the font shrinks.
  */
+/** Share of the columns between a mask's first and last ink column that hold no ink: the gaps between characters. */
+function emptyColumnShare(data, w, h) {
+  let first = -1; let last = -1; let empty = 0;
+  const inked = new Uint8Array(w);
+  for (let x = 0; x < w; x++) { for (let y = 0; y < h; y++) if (data[y * w + x]) { inked[x] = 1; break; } if (inked[x]) { if (first < 0) first = x; last = x; } }
+  if (last <= first) return null;
+  for (let x = first; x <= last; x++) if (!inked[x]) empty++;
+  return empty / (last - first + 1);
+}
+/** The same for a text set in its own font with no letter spacing (it doesn't change when stretched). */
+function fontGapShare(o) {
+  const weight = normalizeWeight(o.fontWeight, o.fontFamily);
+  const ink = inkAt100(o.text, o);
+  const w = Math.max(8, Math.min(1200, Math.round((40 * ink.width) / Math.max(1, ink.height))));
+  const m = renderedMask(o.text, o.fontFamily, weight, w, 40);
+  return m ? emptyColumnShare(m, w, 40) : null;
+}
+
+const DISPLAY_SIZE = 36; // px: titles and display lettering
 function fitToBox(o, size = null) {
   const { x0, y0, x1, y1 } = o.fitBox;
   const bw = x1 - x0;
@@ -714,6 +736,21 @@ function fitToBox(o, size = null) {
   if (spacing < MIN_SPACING) {
     fs = bw / (ink.width / 100 + ((n - 1) * MIN_SPACING) / 1000);
     spacing = MIN_SPACING;
+  }
+  // Wide display lettering (brush strokes, heavy titles) nearly touches; a
+  // narrower library font set to its height and width leaves gaps between
+  // characters (歷 史). Where the original's gaps (empty columns between its
+  // characters) are clearly narrower than ours would be, set the text larger
+  // at the same width until they match, at most 25% above the letters' height.
+  if (fs >= DISPLAY_SIZE && n > 1 && spacing > 0 && o.photoGap != null && o.photoGapText === o.text) {
+    const g0 = fontGapShare(o);
+    const W0 = (ink.width * fs) / 100; const S = ((n - 1) * spacing * fs) / 1000;
+    if (g0 != null && g0 < 0.95 && (g0 * W0 + S) / (W0 + S) - o.photoGap > 0.06) {
+      // Largest size that still fits the width at the tightest spacing allowed.
+      const tightest = bw / (ink.width / 100 + ((n - 1) * MIN_SPACING) / 1000);
+      const wider = Math.min(1.25 * fs, tightest, ((bw * (1 - o.photoGap)) / (1 - g0)) * (100 / ink.width));
+      if (wider > fs) { fs = wider; spacing = ((bw - (ink.width * fs) / 100) / (n - 1) / fs) * 1000; }
+    }
   }
   fs = Math.min(2000, Math.max(6, fs));
   o.set({ charSpacing: Math.round(Math.min(2000, spacing)), scaleX: 1, scaleY: 1 });
@@ -1095,11 +1132,27 @@ async function convertLines(lines) {
   // painted out, so the disc doesn't count as part of its letters.
   const dated = lines.filter((l) => l.disc);
   const noDiscs = dated.length ? withoutDiscs(state.original, dated) : null;
+  // Stacked lines whose reading boxes overlap a little (a title over its
+  // subtitle) are measured in boxes cut at the middle of the overlap: the
+  // upper line's letters poking into the lower box were counted as its
+  // letters and background, and a bold subtitle came out Light.
+  const measureBox = new Map(lines.map((l) => [l, { ...l.bbox }]));
+  const flat = lines.filter((l) => !l.vertical && !l.badge);
+  for (const A of flat) {
+    for (const B of flat) {
+      const a = measureBox.get(A); const b = measureBox.get(B);
+      if (A === B || (a.y0 + a.y1) / 2 >= (b.y0 + b.y1) / 2) continue; // A above B
+      if (Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0) < 4 || a.y1 <= b.y0) continue;
+      if (a.y1 - b.y0 > 0.6 * Math.min(a.y1 - a.y0, b.y1 - b.y0)) continue; // designed to overlap: leave
+      const cut = (a.y1 + b.y0) / 2;
+      a.y1 = cut; b.y0 = cut;
+    }
+  }
   const fitted = lines.map((l) => {
     const src = l.disc ? noDiscs : state.original;
     const han = [...l.text].filter((ch) => /\p{Script=Han}/u.test(ch)).length;
     const known = l.badge ? hexOf(l.badge.ink) : l.panel ? hexOf(l.panel.text) : null;
-    const bbox = inkBounds(src, l.bbox, { vertical: l.vertical, color: known, cjk: han >= 0.5 * [...l.text.replace(/\s/g, '')].length });
+    const bbox = inkBounds(src, measureBox.get(l), { vertical: l.vertical, color: known, cjk: han >= 0.5 * [...l.text.replace(/\s/g, '')].length });
     return { ...l, src, bbox };
   });
   splitStackedLines(fitted);

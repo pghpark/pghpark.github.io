@@ -138,6 +138,11 @@ After reading, the app asks about each doubtful part in turn: a cut-out of the o
 
 **Import new image** opens the photo picker; the image goes in as a movable, resizable box fitted inside the area, stored at most twice the area's size (sharp in 2× exports, light in saved templates), and the old picture under it is painted out (**Undo** brings it back). Any converted line can be put back as picture with **Restore original (keep as picture)** in the pop-up editor.
 
+## Measuring the original letters
+
+- **Stacked lines measured apart:** when two lines' reading boxes overlap a little (a title over its subtitle), each is measured in a box cut at the middle of the overlap. The upper line's letters poking into the lower box used to be counted as the lower line's letters and background: a Black subtitle came out Light (weight right on the benchmark: 80.6% → 81.2%, colour 83.8% → 85.2%). Lines designed to overlap (more than 60% of the smaller height) are left alone.
+- **Display lettering sized by its gaps:** wide display lettering (brush strokes, heavy titles) nearly touches, and a narrower library font fitted to the same height and width leaves gaps between characters (歷 史). For lines of 36 px and up, the share of empty columns between the original's characters is compared with our font's; where ours would be clearly wider (by more than 6% of the width), the text is set larger at the same width until they match, at most 25% above the original letters' height and never tighter than the minimum letter spacing.
+
 ## Consistent fonts
 
 Each line first gets its own closest font, weight and size. Then:
