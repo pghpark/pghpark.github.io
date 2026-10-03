@@ -545,7 +545,8 @@ const STRINGS = {
   },
 };
 
-const STORAGE_KEY = 'template-maker:lang';
+// v2: a choice saved before Chinese became the default is ignored once.
+const STORAGE_KEY = 'template-maker:lang-v2';
 
 function detectLang() {
   const fromUrl = new URLSearchParams(location.search).get('lang');

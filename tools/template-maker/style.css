@@ -75,13 +75,14 @@ body {
 .install-btn ~ .doc-name { order: 0; }
 .topbar > .actions { order: 2; }
 /* First-visit intro: swipe cards */
-.intro-dialog { width: min(560px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); padding: 0; border: 0; border-radius: 18px; background: var(--panel); color: var(--text); display: none; flex-direction: column; overflow: hidden; }
-.intro-dialog[open] { display: flex; }
+.intro-dialog { width: min(560px, calc(100vw - 24px)); max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px); padding: 0; border: 0; border-radius: 18px; background: var(--panel); color: var(--text); overflow: hidden; }
 .intro-dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
-.intro-track { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; flex: 1; min-height: 0; }
+/* Plain block layout (no column flex): Safari sized a flex: 1 track inside an
+   auto-height dialog to zero, leaving only the buttons. */
+.intro-track { display: flex; align-items: flex-start; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
 .intro-track::-webkit-scrollbar { display: none; }
 .intro-track:focus { outline: none; }
-.intro-card { flex: 0 0 100%; scroll-snap-align: start; overflow-y: auto; padding: 24px 22px 8px; box-sizing: border-box; }
+.intro-card { flex: 0 0 100%; width: 100%; scroll-snap-align: start; overflow-y: auto; max-height: calc(100vh - 170px); max-height: calc(100dvh - 170px); padding: 24px 22px 8px; box-sizing: border-box; }
 .intro-card h2 { margin: 0 0 14px; font-size: 22px; line-height: 1.3; }
 .intro-card p { font-size: 17px; line-height: 1.6; color: var(--text); margin: 14px 0 0; }
 .intro-pics { display: flex; align-items: center; justify-content: center; gap: 8px; }
