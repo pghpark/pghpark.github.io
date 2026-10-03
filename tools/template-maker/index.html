@@ -17,7 +17,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" crossorigin="anonymous" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&family=Noto+Serif+TC:wght@400;700&family=Huninn&family=Iansui&display=swap">
-  <link rel="stylesheet" href="style.css?v=2026-10-03.5">
+  <link rel="stylesheet" href="style.css?v=2026-10-03.6">
   <!-- Versions are pinned; see README.md before upgrading (Fabric 7 changed text positioning). -->
   <script crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/fabric@7.4.0/dist/index.min.js"></script>
   <script crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
@@ -29,24 +29,25 @@
        reader-worker.js isn't imported; it is listed so the offline store keeps it. -->
   <script type="importmap">
     {"imports": {
-      "./app.js": "./app.js?v=2026-10-03.5",
-      "./i18n.js": "./i18n.js?v=2026-10-03.5",
-      "./imaging.js": "./imaging.js?v=2026-10-03.5",
-      "./fonts.js": "./fonts.js?v=2026-10-03.5",
-      "./export.js": "./export.js?v=2026-10-03.5",
-      "./storage.js": "./storage.js?v=2026-10-03.5",
-      "./config.js": "./config.js?v=2026-10-03.5",
-      "./paddle.js": "./paddle.js?v=2026-10-03.5",
-      "./reader-worker.js": "./reader-worker.js?v=2026-10-03.5"
+      "./app.js": "./app.js?v=2026-10-03.6",
+      "./i18n.js": "./i18n.js?v=2026-10-03.6",
+      "./imaging.js": "./imaging.js?v=2026-10-03.6",
+      "./fonts.js": "./fonts.js?v=2026-10-03.6",
+      "./export.js": "./export.js?v=2026-10-03.6",
+      "./storage.js": "./storage.js?v=2026-10-03.6",
+      "./config.js": "./config.js?v=2026-10-03.6",
+      "./paddle.js": "./paddle.js?v=2026-10-03.6",
+      "./reader-worker.js": "./reader-worker.js?v=2026-10-03.6"
     }}
   </script>
-  <script type="module" src="app.js?v=2026-10-03.5"></script>
+  <script type="module" src="app.js?v=2026-10-03.6"></script>
 </head>
 <body>
   <header class="topbar">
     <a class="brand" href="../../" data-i18n-title="backToBlog" title="Back to the blog">←</a>
     <strong class="app-name" data-i18n="appName">Template Maker</strong>
     <div id="langToggle" class="lang-toggle" role="group" data-i18n-aria-label="language" aria-label="Language"><button type="button" data-lang="en" lang="en-GB" aria-pressed="true">EN</button><button type="button" data-lang="zh" lang="zh-Hant-TW" aria-pressed="false">繁中</button></div>
+    <button type="button" id="installBtn" class="btn install-btn" data-tip="install" hidden><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M12 7v7M9 11l3 3 3-3"/><path d="M10 18.5h4"/></svg><span data-i18n="installBtn">Install on Home Screen</span></button>
     <input id="docName" class="doc-name" data-i18n-aria-label="templateName" data-i18n-placeholder="untitled" aria-label="Template name" placeholder="Untitled" data-needs-doc>
 
     <div class="actions">
@@ -185,6 +186,32 @@
     </footer>
   </dialog>
 
+  <dialog id="installDialog" class="art-dialog install-dialog">
+    <header><h2 data-i18n="installTitle">Put Template Maker on your Home Screen</h2></header>
+    <div class="art-body">
+      <p class="install-why" data-i18n="installWhy">It opens full screen from its own icon, like an app, and works without a connection after the first use.</p>
+      <ol class="install-steps" data-for="ios">
+        <li><span class="step-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M8 7l4-4 4 4"/><path d="M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1"/></svg></span><span data-i18n-html="installIos1">Tap <b>Share</b> in Safari's toolbar (on newer iPhones, tap <b>•••</b> first, then <b>Share</b>).</span></li>
+        <li><span class="step-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 11l4 4 4-4"/></svg></span><span data-i18n-html="installIos2">Tap <b>View More</b> if you don't see the next option.</span></li>
+        <li><span class="step-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M12 8v8M8 12h8"/></svg></span><span data-i18n-html="installIos3">Tap <b>Add to Home Screen</b>.</span></li>
+        <li><span class="step-ico step-text" data-i18n="installAddWord">Add</span><span data-i18n-html="installIos4">Tap <b>Add</b> at the top right.</span></li>
+      </ol>
+      <ol class="install-steps" data-for="android">
+        <li><span class="step-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg></span><span data-i18n-html="installAnd1">Tap the <b>⋮</b> menu at the top right of Chrome.</span></li>
+        <li><span class="step-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M12 7v7M9 11l3 3 3-3"/></svg></span><span data-i18n-html="installAnd2">Tap <b>Install app</b> or <b>Add to Home screen</b>.</span></li>
+        <li><span class="step-ico step-text" data-i18n="installInstallWord">Install</span><span data-i18n-html="installAnd3">Tap <b>Install</b> to confirm.</span></li>
+      </ol>
+      <ol class="install-steps" data-for="desktop">
+        <li><span class="step-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M12 8v8M8 12h8"/></svg></span><span data-i18n-html="installDesk1">In Chrome or Edge, click the <b>install</b> icon at the right of the address bar, or open the menu and choose <b>Install Template Maker</b>.</span></li>
+        <li><span class="step-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg></span><span data-i18n-html="installDesk2">In Safari on a Mac, choose <b>File → Add to Dock</b>.</span></li>
+      </ol>
+    </div>
+    <footer>
+      <button type="button" id="installLater" class="btn" data-i18n="installLater">Not now</button>
+      <button type="button" id="installNow" class="btn primary" data-i18n="installNow" hidden>Install now</button>
+      <button type="button" id="installOk" class="btn primary" data-i18n="installOk">Got it</button>
+    </footer>
+  </dialog>
   <dialog id="closeDialog" class="art-dialog">
     <header><h2 data-i18n="closeTitle">Save before closing?</h2></header>
     <div class="art-body"><p id="closeText"></p></div>

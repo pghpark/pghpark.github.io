@@ -2078,7 +2078,7 @@ if ('serviceWorker' in navigator) {
   // (see sw.js); they apply from the next page load. On the first visit,
   // reload once as soon as the worker takes over, unless a photo is open.
   const isolateOnce = () => {
-    if (self.crossOriginIsolated || hasDoc() || !$('#busy').hidden || sessionStorage.getItem('tm-isolated')) return;
+    if (self.crossOriginIsolated || hasDoc() || !$('#busy').hidden || document.querySelector('dialog[open]') || sessionStorage.getItem('tm-isolated')) return;
     try { sessionStorage.setItem('tm-isolated', '1'); } catch { return; }
     location.reload();
   };
@@ -2088,6 +2088,43 @@ if ('serviceWorker' in navigator) {
 }
 
 init();
+
+/* ---------------- Install on Home Screen ---------------- */
+
+const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const PLATFORM = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ? 'ios'
+  : /Android/i.test(navigator.userAgent) ? 'android' : 'desktop';
+// Chrome and Edge offer their own install prompt; keep it for "Install now".
+let installPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installPrompt = e; });
+window.addEventListener('appinstalled', () => { $('#installBtn').hidden = true; installPrompt = null; });
+
+/** Step-by-step pictures for this phone (Share → View More → Add to Home Screen on iPhone). */
+function showInstall() {
+  const dlg = $('#installDialog');
+  dlg.querySelectorAll('.install-steps').forEach((ol) => { ol.hidden = ol.dataset.for !== PLATFORM; });
+  $('#installNow').hidden = !installPrompt;
+  $('#installOk').hidden = Boolean(installPrompt);
+  dlg.showModal();
+}
+$('#installBtn').hidden = standalone();
+$('#installBtn').addEventListener('click', showInstall);
+$('#installLater').addEventListener('click', () => $('#installDialog').close());
+$('#installOk').addEventListener('click', () => $('#installDialog').close());
+$('#installNow').addEventListener('click', async () => {
+  $('#installDialog').close();
+  const prompt = installPrompt;
+  installPrompt = null;
+  if (prompt) { prompt.prompt(); await prompt.userChoice.catch(() => {}); }
+});
+// First visit only, shortly after the page opens (never over a photo being loaded).
+if (!standalone()) {
+  setTimeout(() => {
+    if (hasDoc() || !$('#busy').hidden || document.querySelector('dialog[open]')) return;
+    try { if (localStorage.getItem('tm-install-shown')) return; localStorage.setItem('tm-install-shown', '1'); } catch { return; }
+    showInstall();
+  }, 2500);
+}
 
 // Handy for debugging from the console.
 window.templateMaker = { canvas, state, debug: { matchFont, renderedMask, maskSimilarity, inkDensity, guessWeight } };
