@@ -735,10 +735,13 @@ function harmoniseBlocks(items) {
   for (const group of classes.values()) {
     const all = group.flatMap((blk) => blk.members);
     const family = majority(all, (x) => x.o.fontFamily);
-    const weight = normalizeWeight(majority(all, (x) => normalizeWeight(x.o.fontWeight, family)), family);
+    // Weight is shared only among lines of the same size: a label and its
+    // value (主辦單位 / 臺北市政府文化局) often differ in weight and size.
+    const weightOf = (x) => normalizeWeight(majority(all.filter((y) => Math.max(x.ref, y.ref) / Math.min(x.ref, y.ref) <= 1.08), (y) => normalizeWeight(y.o.fontWeight, family)), family);
+    const weights = new Map(all.map((x) => [x, weightOf(x)]));
     for (const { members } of group) {
       const fill = majority(members, (x) => x.o.fill);
-      for (const x of members) { x.o.set({ fontFamily: family, fontWeight: weight, fill }); fitToBox(x.o); }
+      for (const x of members) { x.o.set({ fontFamily: family, fontWeight: weights.get(x), fill }); fitToBox(x.o); }
       // One size per block when its lines are nearly the same size already.
       if (members.length < 2) continue;
       // In a paragraph of 3+ lines where most agree, an odd one out was mis-measured.
@@ -2001,6 +2004,16 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true });
     setTimeout(resolve, 5000);
   });
+  // The worker adds the headers that let the text reader use several cores
+  // (see sw.js); they apply from the next page load. On the first visit,
+  // reload once as soon as the worker takes over, unless a photo is open.
+  const isolateOnce = () => {
+    if (self.crossOriginIsolated || hasDoc() || !$('#busy').hidden || sessionStorage.getItem('tm-isolated')) return;
+    try { sessionStorage.setItem('tm-isolated', '1'); } catch { return; }
+    location.reload();
+  };
+  if (navigator.serviceWorker.controller) isolateOnce();
+  else navigator.serviceWorker.addEventListener('controllerchange', isolateOnce, { once: true });
 }
 }
 

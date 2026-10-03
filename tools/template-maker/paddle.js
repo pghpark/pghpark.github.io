@@ -319,6 +319,17 @@ export async function paddleDetect(source, { onProgress } = {}) {
   }
 }
 
+const READ_AHEAD = 6;
+
+/** Run `fn` over `items` with at most `limit` running at once; results in order. */
+async function inTurn(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const lane = async () => { while (next < items.length) { const i = next++; out[i] = await fn(items[i], i); } };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, lane));
+  return out;
+}
+
 async function readAll(source, reader, chars, cn2tw, notify) {
   const det = (input) => reader.run('det', input);
   const rec = (input) => reader.run('rec', input);
@@ -342,13 +353,18 @@ async function readAll(source, reader, chars, cn2tw, notify) {
   let done = 0;
   const read = [];
   for (const boxes of passes) {
-    const lines = [];
-    for (const box of boxes) {
+    // Several lines in flight: this page prepares the next crops while the
+    // worker reads, so it never waits idle. Each line is read exactly as alone.
+    const results = await inTurn(boxes, READ_AHEAD, async (box) => {
       const r = await recognize(rec, chars, source, box);
       notify({ status: 'reading text', progress: ++done / total });
+      return r;
+    });
+    const lines = [];
+    results.forEach((r, i) => {
       // A few non-text marks get a box and a near-zero score ("C" at 4%).
-      if (r.text && r.confidence >= 20) lines.push({ ...r, text: toTaiwan(r.text, cn2tw), bbox: box, detScore: box.score });
-    }
+      if (r.text && r.confidence >= 20) lines.push({ ...r, text: toTaiwan(r.text, cn2tw), bbox: boxes[i], detScore: boxes[i].score });
+    });
     read.push(lines);
   }
   const lines = dropRepeats(stackColumns(mergePieces(read.length > 1 ? combinePasses(read[0], read[1]) : read[0])));

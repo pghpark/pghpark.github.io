@@ -52,7 +52,7 @@ After the first use, the app works without a connection (`sw.js`, a service work
 - When a library or model version is upgraded, the old version's stored files are deleted, so storage doesn't grow over time.
 - The app asks the browser to keep this storage (`navigator.storage.persist()`); a browser can still clear it when the phone runs out of space, and the app then downloads again.
 
-The text reader runs in a background worker (`reader-worker.js`), so the page keeps responding while a photo is processed. The worker is closed after each photo: ONNX Runtime's working memory only grows while it runs, and closing it is the only way to give that (about 300 MB) back to the phone for editing and exporting.
+The text reader runs in a background worker (`reader-worker.js`), so the page keeps responding while a photo is processed. It reads several lines in a row without pausing (the page prepares the next crops while the worker reads; each line is read exactly as on its own), and uses several processor cores when the page is "cross-origin isolated": `sw.js` adds the two headers this needs (`Cross-Origin-Opener-Policy`, `Cross-Origin-Embedder-Policy`), which GitHub Pages can't send, and on the first visit the page reloads itself once as soon as the service worker takes over (never while a photo is open or loading). Everything the app loads from other sites already uses CORS, which those headers require. The worker is closed after each photo: ONNX Runtime's working memory only grows while it runs, and closing it is the only way to give that (about 300 MB) back to the phone for editing and exporting.
 
 ## Photo formats
 

@@ -51,7 +51,7 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin === self.location.origin) {
-    if (url.pathname.startsWith(SCOPE)) e.respondWith(fresh(req));
+    if (url.pathname.startsWith(SCOPE)) e.respondWith(fresh(req).then(isolated));
   } else if (url.hostname === 'cdn.jsdelivr.net' && /@\d/.test(url.pathname)) {
     e.respondWith(stored(req));
   } else if (url.hostname === 'fonts.gstatic.com') {
@@ -60,6 +60,20 @@ self.addEventListener('fetch', (e) => {
     e.respondWith(fresh(req, LIB));
   }
 });
+
+/**
+ * The app's own files carry the headers that make the page "cross-origin
+ * isolated", which lets the text reader use several processor cores (2–3×
+ * faster). GitHub Pages can't send them, so they are added here. Everything
+ * the app loads from other sites is fetched with CORS, which these headers require.
+ */
+function isolated(res) {
+  if (!res || res.type === 'opaque' || res.status === 0) return res;
+  const headers = new Headers(res.headers);
+  headers.set('Cross-Origin-Opener-Policy', 'same-origin');
+  headers.set('Cross-Origin-Embedder-Policy', 'require-corp');
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
 
 /** Server first (skipping the browser's short-term cache), stored copy when offline. */
 async function fresh(req, name = APP) {
