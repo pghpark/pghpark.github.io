@@ -17,7 +17,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" crossorigin="anonymous" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&family=Noto+Serif+TC:wght@400;700&family=Huninn&family=Iansui&display=swap">
-  <link rel="stylesheet" href="style.css?v=2026-10-02.20">
+  <link rel="stylesheet" href="style.css?v=2026-10-03.1">
   <!-- Versions are pinned; see README.md before upgrading (Fabric 7 changed text positioning). -->
   <script crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/fabric@7.4.0/dist/index.min.js"></script>
   <script crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
@@ -29,18 +29,18 @@
        reader-worker.js isn't imported; it is listed so the offline store keeps it. -->
   <script type="importmap">
     {"imports": {
-      "./app.js": "./app.js?v=2026-10-02.20",
-      "./i18n.js": "./i18n.js?v=2026-10-02.20",
-      "./imaging.js": "./imaging.js?v=2026-10-02.20",
-      "./fonts.js": "./fonts.js?v=2026-10-02.20",
-      "./export.js": "./export.js?v=2026-10-02.20",
-      "./storage.js": "./storage.js?v=2026-10-02.20",
-      "./config.js": "./config.js?v=2026-10-02.20",
-      "./paddle.js": "./paddle.js?v=2026-10-02.20",
-      "./reader-worker.js": "./reader-worker.js?v=2026-10-02.20"
+      "./app.js": "./app.js?v=2026-10-03.1",
+      "./i18n.js": "./i18n.js?v=2026-10-03.1",
+      "./imaging.js": "./imaging.js?v=2026-10-03.1",
+      "./fonts.js": "./fonts.js?v=2026-10-03.1",
+      "./export.js": "./export.js?v=2026-10-03.1",
+      "./storage.js": "./storage.js?v=2026-10-03.1",
+      "./config.js": "./config.js?v=2026-10-03.1",
+      "./paddle.js": "./paddle.js?v=2026-10-03.1",
+      "./reader-worker.js": "./reader-worker.js?v=2026-10-03.1"
     }}
   </script>
-  <script type="module" src="app.js?v=2026-10-02.20"></script>
+  <script type="module" src="app.js?v=2026-10-03.1"></script>
 </head>
 <body>
   <header class="topbar">
@@ -202,17 +202,19 @@
       <button type="button" id="shareYes" class="btn primary" data-i18n="shareSave">Save or share</button>
     </footer>
   </dialog>
-  <dialog id="artDialog" class="art-dialog">
-    <header><h2 data-i18n="artTitle">Text inside pictures</h2></header>
+  <dialog id="askDialog" class="art-dialog ask-dialog">
+    <header><h2 data-i18n="askTitle">Keep or convert?</h2><span id="askStep" class="muted"></span></header>
     <div class="art-body">
-      <p id="artCount"></p>
-      <ul id="artList" class="art-list" lang="zh-Hant-TW"></ul>
-      <p class="muted small" data-i18n="artHelp">Signs, banners and other text that is part of the artwork. Keep it as part of the picture, or turn it into editable text like the rest?</p>
+      <p id="askKind" class="ask-kind"></p>
+      <div class="ask-snip"><canvas id="askSnip"></canvas></div>
+      <p id="askRead" class="ask-read" lang="zh-Hant-TW"></p>
+      <p id="askHint" class="muted small"></p>
     </div>
-    <footer>
-      <button type="button" id="artNo" class="btn" data-i18n="artKeepAll">Keep all as picture</button>
-      <button type="button" id="artYes" class="btn primary" data-i18n="artConvert">Make ticked ones editable</button>
+    <footer class="ask-choices">
+      <button type="button" id="askKeep" class="btn ask-btn" data-i18n="askKeep">Keep as picture</button>
+      <button type="button" id="askConvert" class="btn ask-btn primary" data-i18n="askConvert">Convert to text</button>
     </footer>
+    <p class="ask-rest"><button type="button" id="askRest" class="btn link" data-i18n="askRest">Keep all the rest as picture</button></p>
   </dialog>
 
   <dialog id="authDialog">
@@ -225,8 +227,10 @@
   </dialog>
 
   <div id="toast" class="toast" role="status" hidden></div>
+  <input id="slotInput" type="file" accept="image/*,.heic,.heif" hidden>
   <div id="quickEdit" class="quick-edit" role="dialog" data-i18n-aria-label="quickEdit" aria-label="Edit text" hidden>
     <textarea id="qeText" rows="2" lang="zh-Hant-TW"></textarea>
+    <select id="qeFont" class="qe-font" data-i18n-aria-label="font" aria-label="Font"></select>
     <div class="qe-row">
       <button type="button" id="qeSmaller" class="qe-btn" data-i18n-aria-label="qeSmaller" data-i18n-title="qeSmaller" aria-label="Smaller text" title="Smaller text">A−</button>
       <input id="qeSize" type="number" min="4" max="2000" step="1" inputmode="numeric" data-i18n-aria-label="size" aria-label="Size">
@@ -234,9 +238,10 @@
       <input id="qeColor" type="color" data-i18n-aria-label="colour" data-i18n-title="colour" aria-label="Colour" title="Colour">
       <button type="button" id="qeBold" class="qe-btn" aria-pressed="false" data-i18n-aria-label="bold" data-i18n-title="bold" aria-label="Bold" title="Bold"><b>B</b></button>
       <button type="button" id="qeVertical" class="qe-btn" aria-pressed="false" data-i18n-aria-label="vertical" data-i18n-title="vertical" aria-label="Vertical text" title="Vertical text">直</button>
-      <button type="button" id="qeKeep" class="qe-btn" data-i18n-aria-label="keepPicture" data-i18n-title="keepPicture" aria-label="Keep as picture" title="Keep as picture"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M21 16l-5-5-8 8"/></svg></button>
       <button type="button" id="qeDelete" class="qe-btn danger" data-i18n-aria-label="delete" data-i18n-title="delete" aria-label="Delete" title="Delete"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></button>
     </div>
+    <button type="button" id="qeReplace" class="btn qe-keep" data-tip="replaceImage"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M21 16l-5-5-8 8"/></svg><span data-i18n="replaceImage">Replace image</span></button>
+    <button type="button" id="qeKeep" class="btn qe-keep" data-tip="keepPicture"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M21 16l-5-5-8 8"/></svg><span data-i18n="keepPictureBtn">Restore original (keep as picture)</span></button>
   </div>
   <div id="infoPop" class="info-pop" role="tooltip" hidden></div>
   <script>

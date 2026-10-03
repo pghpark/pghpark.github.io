@@ -664,6 +664,19 @@ function dropRepeats(lines) {
  */
 function mergePieces(lines) {
   const H = (b) => b.y1 - b.y0;
+  const W = (b) => b.x1 - b.x0;
+  const mid = (b) => (b.x0 + b.x1) / 2;
+  // Centred columns side by side (names in a speaker grid) can sit as close
+  // as a word gap. A piece heads its own column when a line of clearly
+  // different width is centred on it just above or below: then keep apart.
+  const ownColumn = (a, other) => lines.some((l) => {
+    const b = l.bbox;
+    if (l.vertical || b === a || b === other) return false;
+    const h = H(a);
+    const below = b.y0 - a.y1; const above = a.y0 - b.y1;
+    const near = (below > -0.3 * h && below < 3 * h) || (above > -0.3 * h && above < 3 * h);
+    return near && Math.abs(mid(b) - mid(a)) <= Math.max(3, 0.06 * W(a)) && Math.abs(W(b) - W(a)) >= 0.25 * W(a);
+  });
   const out = [];
   const rest = [...lines].sort((a, b) => a.bbox.x0 - b.bbox.x0);
   while (rest.length) {
@@ -677,6 +690,9 @@ function mergePieces(lines) {
       const sameSize = Math.max(H(a), H(b)) / Math.min(H(a), H(b)) < 1.4;
       const gap = b.x0 - a.x1;
       if (!sameRow || !sameSize || gap > 1.5 * Math.min(H(a), H(b)) || gap < -0.3 * H(b)) continue;
+      if (ownColumn(a, b) && ownColumn(b, a)) continue;
+      // A doubtful reading (an emblem read as "空物") stays apart from confident text.
+      if ((cur.confidence < 50) !== (nx.confidence < 50)) continue;
       cur = {
         ...cur,
         text: `${cur.text}${gap > 0.35 * Math.min(H(a), H(b)) ? ' ' : ''}${nx.text}`,

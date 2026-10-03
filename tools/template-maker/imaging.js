@@ -1,7 +1,12 @@
 // Canvas helpers: loading photos, removing old text, guessing text colour.
 import { t } from './i18n.js';
 
-export const MAX_SIDE = 2400;
+// Largest photo side kept. On a computer, full detail up to 4096 px (an
+// iPhone photo is 4032 px; Safari's largest canvas is 4096 × 4096 pixels'
+// worth). On a phone, 2400 px: a 4032 px photo at full size peaked at 1.8 GB
+// against 1.26 GB, near where iPhone Safari closes the tab. 2400 px is still
+// ample for text; reading works on its own smaller copies either way.
+export const MAX_SIDE = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches ? 2400 : 4096;
 
 export function makeCanvas(w, h) {
   const c = document.createElement('canvas');
@@ -36,6 +41,9 @@ export async function fileToCanvas(file) {
     const ctx = c.getContext('2d', { willReadFrequently: true });
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(img, 0, 0, c.width, c.height);
+    // Not resized: templates keep the uploaded file itself as the original, untouched.
+    // A copy of its bytes: the browser can revoke access to the picked file later.
+    if (scale === 1 && /^image\/(jpeg|png|webp)$/.test(file.type)) c.sourceFile = new Blob([await file.arrayBuffer()], { type: file.type });
     return c;
   } finally {
     URL.revokeObjectURL(url);
@@ -131,10 +139,12 @@ function sideColumn(ctx, canvas, x, y0, h, fallback) {
  * left as photographed, so artwork behind or near the text isn't smeared.
  * Falls back to eraseBox when there's no clear text/background contrast.
  */
-export function eraseText(canvas, box, pad = 3) {
+export function eraseText(canvas, box, pad = 3, colors = null) {
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  const bg = sampleRing(canvas, box, pad);
-  const fg = textRGB(canvas, box, bg);
+  // `colors` ({ bg, fg }) for text on a panel: the ring around its box can be
+  // outside the panel, and the panel itself must not count as text.
+  const bg = colors?.bg || sampleRing(canvas, box, pad);
+  const fg = colors?.fg || textRGB(canvas, box, bg);
   if (!fg) { eraseBox(canvas, box, pad); return; }
   const grow = Math.min(3, Math.max(1, Math.round((box.y1 - box.y0) * 0.04)));
   const r = clampRect(canvas, box.x0 - pad - grow - 1, box.y0 - pad - grow - 1, box.x1 + pad + grow + 1, box.y1 + pad + grow + 1);
@@ -362,6 +372,185 @@ export function plainPatch(canvas, ink) {
   const outside = sampleRing(canvas, { x0: fx0, y0: fy0, x1: fx1, y1: fy1 }, 2);
   const offset = Math.abs(near[0] - outside[0]) + Math.abs(near[1] - outside[1]) + Math.abs(near[2] - outside[2]);
   return { bounded, ratio: area / Math.max(1, (ink.x1 - ink.x0) * (ink.y1 - ink.y0)), offset };
+}
+
+/**
+ * Text printed on a coloured panel (a filled box, badge or band): most of the
+ * reading box is one colour that differs clearly from just outside the box,
+ * and the letters are another colour standing out from that panel. Plain text
+ * on the page fails this, since most of its box is the page colour itself.
+ * Returns { fill, text } as [r, g, b], or null.
+ */
+export function panelUnder(canvas, box) {
+  const r = clampRect(canvas, box.x0, box.y0, box.x1, box.y1);
+  const w = r.x1 - r.x0; const h = r.y1 - r.y0;
+  if (w < 4 || h < 4) return null;
+  const { data } = canvas.getContext('2d', { willReadFrequently: true }).getImageData(r.x0, r.y0, w, h);
+  const dist = (a, b) => Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]);
+  // Most common colour (4 bits per channel), then the average of its pixels.
+  const counts = new Map();
+  for (let i = 0; i < data.length; i += 4) {
+    const key = ((data[i] >> 4) << 8) | ((data[i + 1] >> 4) << 4) | (data[i + 2] >> 4);
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  const top = [...counts].sort((a, b) => b[1] - a[1])[0][0];
+  const sum = [0, 0, 0]; let n = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    const px = [data[i], data[i + 1], data[i + 2]];
+    if (dist(px, [((top >> 8) << 4) + 8, (((top >> 4) & 15) << 4) + 8, ((top & 15) << 4) + 8]) < 48) { sum[0] += px[0]; sum[1] += px[1]; sum[2] += px[2]; n++; }
+  }
+  if (n < 0.45 * w * h) return null;
+  const fill = sum.map((v) => v / n);
+  // Compared just outside the box and a little further out (the band beside
+  // a line can be the next line's letters).
+  const near = sampleRing(canvas, box, Math.max(2, 0.12 * Math.min(w, h)));
+  const further = sampleRing(canvas, box, Math.max(4, 0.6 * Math.min(w, h)));
+  if (dist(fill, near) < 150 || dist(fill, further) < 150) return null;
+  // The letters: the pixels least like the panel.
+  const far = [];
+  for (let i = 0; i < data.length; i += 4) far.push([dist([data[i], data[i + 1], data[i + 2]], fill), i]);
+  far.sort((a, b) => b[0] - a[0]);
+  const pick = far.slice(0, Math.max(4, Math.round(far.length * 0.08)));
+  const text = [0, 1, 2].map((c) => pick.reduce((t, [, i]) => t + data[i + c], 0) / pick.length);
+  if (dist(text, fill) < 150) return null;
+  return { fill: fill.map(Math.round), text: text.map(Math.round) };
+}
+
+/**
+ * QR codes, found by their three corner squares ("finder patterns"): along a
+ * row and a column through each, dark-light-dark-light-dark runs in the ratio
+ * 1:1:3:1:1. Three of similar size forming a right angle are one code.
+ * Returns boxes { x0, y0, x1, y1 } (including the quiet margin) in canvas pixels.
+ */
+export function findQRCodes(canvas) {
+  const W = canvas.width; const H = canvas.height;
+  const { data } = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, W, H);
+  // Grey levels and Otsu's threshold.
+  const grey = new Uint8Array(W * H); const hist = new Array(256).fill(0);
+  for (let k = 0; k < W * H; k++) { const v = (data[k * 4] * 299 + data[k * 4 + 1] * 587 + data[k * 4 + 2] * 114) / 1000 | 0; grey[k] = v; hist[v]++; }
+  let sum = 0; for (let v = 0; v < 256; v++) sum += v * hist[v];
+  let sumB = 0; let wB = 0; let best = 0; let thr = 128;
+  for (let v = 0; v < 256; v++) {
+    wB += hist[v]; if (!wB) continue; const wF = W * H - wB; if (!wF) break;
+    sumB += v * hist[v]; const between = wB * wF * (sumB / wB - (sum - sumB) / wF) ** 2;
+    if (between > best) { best = between; thr = v; }
+  }
+  const dark = (x, y) => grey[y * W + x] <= thr;
+  const ratioOK = (r) => {
+    const total = r.reduce((a, b) => a + b, 0); if (total < 7) return false;
+    const m = total / 7; const tol = m * 0.6;
+    return Math.abs(r[0] - m) < tol && Math.abs(r[1] - m) < tol && Math.abs(r[2] - 3 * m) < 3 * tol && Math.abs(r[3] - m) < tol && Math.abs(r[4] - m) < tol;
+  };
+  // Runs along a line through (x, y), centred on the dark run there.
+  const runsAt = (x, y, dx, dy) => {
+    const inside = (a, b) => a >= 0 && b >= 0 && a < W && b < H;
+    if (!dark(x, y)) return null;
+    const count = (sx, sy, want, max) => { let n = 0; while (inside(sx, sy) && dark(sx, sy) === want && n < max) { n++; sx += dx * sgn; sy += dy * sgn; } return [n, sx, sy]; };
+    let sgn = 1; const r = [0, 0, 0, 0, 0];
+    // centre run both ways
+    let a = 0; let px = x; let py = y; while (inside(px, py) && dark(px, py)) { a++; px -= dx; py -= dy; }
+    let b = 0; let qx = x + dx; let qy = y + dy; while (inside(qx, qy) && dark(qx, qy)) { b++; qx += dx; qy += dy; }
+    r[2] = a + b;
+    sgn = -1; let [n1, ax, ay] = count(px, py, false, r[2] * 2); r[1] = n1; [n1, ax, ay] = count(ax, ay, true, r[2] * 2); r[0] = n1;
+    sgn = 1; let [n2, bx, by] = count(qx, qy, false, r[2] * 2); r[3] = n2; [n2, bx, by] = count(bx, by, true, r[2] * 2); r[4] = n2;
+    return ratioOK(r) ? { r, start: -(a - 1) - r[1] - r[0], end: b + r[3] + r[4] } : null;
+  };
+  const found = [];
+  for (let y = 0; y < H; y += 2) {
+    let x = 0;
+    while (x < W) {
+      // Collect five runs starting with a dark one.
+      if (!dark(x, y)) { x++; continue; }
+      const r = []; let p = x; let col = true;
+      while (r.length < 5 && p < W) { let n = 0; while (p < W && dark(p, y) === col) { n++; p++; } r.push(n); col = !col; }
+      if (r.length === 5 && ratioOK(r)) {
+        const cx = x + r[0] + r[1] + (r[2] >> 1);
+        const v = runsAt(cx, y, 0, 1);
+        if (v) {
+          const cy = y + (v.start + v.end) / 2;
+          const h = runsAt(cx, Math.round(cy), 1, 0);
+          if (h) {
+            const ccx = cx + (h.start + h.end) / 2;
+            const module = (r.reduce((a2, b2) => a2 + b2, 0) + v.r.reduce((a2, b2) => a2 + b2, 0)) / 14;
+            const near = found.find((f) => Math.hypot(f.x - ccx, f.y - cy) < 2 * Math.max(f.m, module));
+            if (near) { near.n++; near.x += (ccx - near.x) / near.n; near.y += (cy - near.y) / near.n; }
+            else found.push({ x: ccx, y: cy, m: module, n: 1 });
+          }
+        }
+      }
+      x += r[0] || 1;
+    }
+  }
+  const finders = found.filter((f) => f.n >= 2);
+  const codes = [];
+  const used = new Set();
+  for (let i = 0; i < finders.length; i++) {
+    for (let j = 0; j < finders.length; j++) {
+      for (let k = j + 1; k < finders.length; k++) {
+        if (i === j || i === k || used.has(i) || used.has(j) || used.has(k)) continue;
+        const A = finders[i]; const B = finders[j]; const C = finders[k];
+        const ms = [A.m, B.m, C.m]; if (Math.max(...ms) / Math.min(...ms) > 1.6) continue;
+        const ab = Math.hypot(B.x - A.x, B.y - A.y); const ac = Math.hypot(C.x - A.x, C.y - A.y); const bc = Math.hypot(C.x - B.x, C.y - B.y);
+        // A is the corner: AB ≈ AC, BC ≈ AB·√2, and the code is at least 21 modules.
+        if (Math.abs(ab - ac) > 0.2 * ab || Math.abs(bc - ab * Math.SQRT2) > 0.2 * bc || ab < 12 * A.m) continue;
+        const D = { x: B.x + C.x - A.x, y: B.y + C.y - A.y };
+        const xs = [A.x, B.x, C.x, D.x]; const ys = [A.y, B.y, C.y, D.y];
+        const pad = 4.5 * A.m; // half a finder (3.5 modules) plus a module of margin
+        codes.push({
+          x0: Math.max(0, Math.floor(Math.min(...xs) - pad)), y0: Math.max(0, Math.floor(Math.min(...ys) - pad)),
+          x1: Math.min(W, Math.ceil(Math.max(...xs) + pad)), y1: Math.min(H, Math.ceil(Math.max(...ys) + pad)),
+        });
+        used.add(i); used.add(j); used.add(k);
+      }
+    }
+  }
+  return codes;
+}
+
+/**
+ * The graphic part of a logo (its emblem) next to the logo's lettering:
+ * shapes that stand out from the page within about one lettering-height of
+ * `group` (the lettering's box), outside every text box. Returns its box or null.
+ */
+export function logoMark(canvas, group, textBoxes) {
+  const H = Math.max(8, group.y1 - group.y0);
+  const win = clampRect(canvas, group.x0 - 1.6 * H, group.y0 - 0.6 * H, group.x1 + 1.6 * H, group.y1 + 0.6 * H);
+  const w = win.x1 - win.x0; const h = win.y1 - win.y0;
+  if (w < 4 || h < 4) return null;
+  const { data } = canvas.getContext('2d', { willReadFrequently: true }).getImageData(win.x0, win.y0, w, h);
+  const page = sampleRing(canvas, { x0: win.x0 + 3, y0: win.y0 + 3, x1: win.x1 - 3, y1: win.y1 - 3 }, 0);
+  const inText = (x, y) => textBoxes.some((b) => x >= b.x0 - 2 && x <= b.x1 + 2 && y >= b.y0 - 2 && y <= b.y1 + 2);
+  const ink = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      if (Math.abs(data[i] - page[0]) + Math.abs(data[i + 1] - page[1]) + Math.abs(data[i + 2] - page[2]) > 60 && !inText(win.x0 + x, win.y0 + y)) ink[y * w + x] = 1;
+    }
+  }
+  // Connected shapes; keep those near the lettering and not cut by the window edge.
+  const seen = new Uint8Array(w * h);
+  let box = null;
+  for (let s0 = 0; s0 < w * h; s0++) {
+    if (!ink[s0] || seen[s0]) continue;
+    const stack = [s0]; seen[s0] = 1; let n = 0; let x0 = w; let y0 = h; let x1 = 0; let y1 = 0;
+    while (stack.length) {
+      const k = stack.pop(); n++;
+      const x = k % w; const y = (k - x) / w;
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      for (const nk of [k - 1, k + 1, k - w, k + w]) {
+        if (nk < 0 || nk >= w * h || seen[nk] || !ink[nk] || (Math.abs((nk % w) - x) > 1)) continue;
+        seen[nk] = 1; stack.push(nk);
+      }
+    }
+    if (n < 0.02 * H * H) continue;
+    if (x0 === 0 || y0 === 0 || x1 === w - 1 || y1 === h - 1) continue;
+    const b = { x0: win.x0 + x0, y0: win.y0 + y0, x1: win.x0 + x1 + 1, y1: win.y0 + y1 + 1 };
+    const gap = Math.max(b.x0 - group.x1, group.x0 - b.x1, b.y0 - group.y1, group.y0 - b.y1);
+    if (gap > 1.0 * H) continue;
+    box = box ? { x0: Math.min(box.x0, b.x0), y0: Math.min(box.y0, b.y0), x1: Math.max(box.x1, b.x1), y1: Math.max(box.y1, b.y1) } : b;
+  }
+  if (!box || (box.x1 - box.x0) * (box.y1 - box.y0) < 0.15 * H * H) return null;
+  return box;
 }
 
 /**

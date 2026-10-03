@@ -36,7 +36,7 @@ It then opens full screen from its icon (範本製作器). Templates saved in th
 
 iPhone Safari closes a tab that uses too much memory, and refuses new images once all of a tab's canvases together pass a limit (the error *The object is in an invalid state*). So the app:
 
-- keeps the photo at most 2400 px on its long side and draws the editor at 1× (not 3× screen density);
+- keeps the photo at most 2400 px on its long side on a phone (4096 px on a computer) and draws the editor at 1× (not 3× screen density);
 - frees every temporary canvas as soon as it is used (canvases otherwise stay counted until Safari gets round to freeing them: about 450 MB for a 100-line poster before this was fixed), and frees the previous photo, removed text boxes and export copies straight away;
 - caps 2× / 3× image exports at 16.7 megapixels, Safari's largest canvas;
 - closes the text reader's worker after each photo (see *Offline* below).
@@ -63,16 +63,17 @@ detection, use a sharp, well-lit photo taken straight on, with printed (not hand
 
 ## What it does
 
-1. **Upload a photo** (the **Upload a photo** button, drag-and-drop, or paste). Large photos are scaled to 2400 px on the long side.
+1. **Upload a photo** (the **Upload a photo** button, drag-and-drop, or paste). Photos keep full detail up to 4096 px on the long side on a computer and 2400 px on a phone (to stay within iPhone Safari's memory; ample for text).
 2. **Find and read every piece of text** with [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) PP-OCRv6 Small (Apache-2.0), running in the browser through ONNX Runtime Web (see *How text is found* below).
-3. **Remove the original text** from the background. Only the letter strokes are repainted, from the pixels around them, so artwork behind or next to the text isn't smeared. Hold **Hold to see original** to compare with the untouched photo.
-4. **Edit.** Each line becomes a text box whose letters cover the original's: the same letter height, line width (through letter spacing), position, colour and bold/regular weight. Tap a box for the pop-up editor (text, size, colour, bold, vertical, keep as picture, delete), or use the side panel for everything else. The most-used tools (＋ Text, Zoom, Undo, Redo) are large keys in a bar right under the top buttons; on phones it stays at the top of the screen while you scroll. **Erase area** and **↶ Erase** are in the side panel under *Clean up the photo* (on a phone, tapping Erase area scrolls back up to the photo). **Close template** (top bar) goes back to the start screen, first asking **Save / Don’t save / Cancel** if there are unsaved changes. After you correct a misread, the line re-fits itself to the original area. Pinch or Ctrl + scroll to zoom; on a phone, drag the photo with one finger to move around it (a drag that starts on a text box moves the text).
-5. **Save** to this browser (IndexedDB), or to the cloud once Supabase is set up (below).
-6. **Export:**
+3. **Ask about the doubtful parts**, one at a time, with a cut-out of the original and two big buttons (see *Keep or convert* below). Everything else is converted straight away.
+4. **Remove the original text** from the background. Only the letter strokes are repainted, from the pixels around them, so artwork behind or next to the text isn't smeared. Hold **Hold to see original** to compare with the untouched photo.
+5. **Edit.** Each line becomes a text box whose letters cover the original's: the same letter height, line width (through letter spacing), position, colour and bold/regular weight. Lines of one paragraph, and each kind of text across the page (all the names, all the headings, all the body text), get one font and weight, as in the original (see *Consistent fonts* below). Tap a box for the pop-up editor (text, font, size, colour, bold, vertical, delete, and a labelled **Restore original (keep as picture)** button); tap an image box (a new QR code or logo) for **Replace image** and delete, or use the side panel for everything else. The most-used tools (＋ Text, Zoom, Undo, Redo) are large keys in a bar right under the top buttons; on phones it stays at the top of the screen while you scroll. **Erase area** and **↶ Erase** are in the side panel under *Clean up the photo* (on a phone, tapping Erase area scrolls back up to the photo). **Close template** (top bar) goes back to the start screen, first asking **Save / Don’t save / Cancel** if there are unsaved changes. After you correct a misread, the line re-fits itself to the original area. Pinch or Ctrl + scroll to zoom; on a phone, drag the photo with one finger to move around it (a drag that starts on a text box moves the text).
+6. **Save** to this browser (IndexedDB), or to the cloud once Supabase is set up (below). The uploaded photo is kept as the original exactly as it was (no re-compression) when it wasn't resized, and an unchanged background reuses its saved copy, so saving again never degrades the images.
+7. **Export:** (image boxes are included in every format)
 
 | Format | Notes |
 |---|---|
-| PNG / JPEG / WebP | 1×, 2× or 3× scale. |
+| PNG / JPEG / WebP | 1×, 2× or 3× scale (up to 16.7 megapixels, Safari's largest canvas). PNG and WebP are exact; JPEG at 95% quality. |
 | PowerPoint / Canva (.pptx) | **Best for Canva.** One slide the size of the photo: the cleaned background as a picture, plus a real, editable text box for every text box (same font, size, colour, alignment, rotation and line spacing). It also opens in PowerPoint, Google Slides and Keynote. In Canva, drag the file onto the home page. Canva swaps in a similar font if it doesn't have Noto Sans/Serif TC. |
 | PDF | Real, searchable text. The fonts are subset with HarfBuzz to just the characters used, so a page is usually under 100 KB. 1 px = 1 pt. |
 | PSD | Layers: hidden original photo, cleaned background, and one **live text layer** per text box (Noto Sans TC / Noto Serif TC, correct size, colour, position and rotation). Photoshop asks to *update text layers* when the file opens. Click **Update**. Install the fonts from [Google Fonts](https://fonts.google.com/noto/specimen/Noto+Sans+TC) first. |
@@ -97,11 +98,35 @@ On a phone, every export opens the system share sheet (**Save to Files**, **Save
 
 - **Finding and reading text:** PaddleOCR PP-OCRv6 Small (the official ONNX exports, from the pinned npm package `@arcships/light-ocr-model-ppocrv6-small@0.3.4`, served by jsDelivr). On 20 benchmark posters it read 77.1% of characters and 56.2% of lines exactly, against 72.1% and 43.1% for PP-OCRv5 mobile, at a similar download size. A detection model finds every text region, in any layout including vertical; a recognition model then reads each region. Vertical regions are rotated first, as PaddleOCR does. Detection runs twice: once on the whole image at up to about 1.4 megapixels, where display lettering is found whole, and once larger (up to 2400 px) in overlapping 1024 px tiles, which only adds or improves small print. Capping the whole-image pass and tiling the large one keep memory within what phone browsers allow (a phone photo peaks at about 0.95 GB in Chromium, against 2.65 GB before, when iPhone Safari closed the tab; afterwards it settles at about 0.5 GB). One model reads Traditional and Simplified Chinese, English and Japanese, with an 18,709-character dictionary.
 - **Taiwan forms:** occasional Simplified outputs (国, 创) are converted with [OpenCC](https://github.com/BYVoid/OpenCC) (Mainland → Taiwan characters, no vocabulary changes); 台 is kept as written.
-- **Unreadable areas** (below 50% reading confidence, usually logos or tiny print) are left as in the photo rather than replaced with gibberish.
+- **Neighbouring columns:** pieces on one row are joined into one line unless each heads its own centred column (a line of clearly different width centred on it just above or below, as in a speaker grid), so "Ven. Tenzin Choidron" and "Zinaida Debenova" stay two names. A doubtful piece (below 50%) is never joined to confident text.
 - **Vertical labels split into single characters** (第④屆) are joined back into one vertical line.
 - **Weekday badges** (a character in a filled circle after a date, 01/15 ㊁): the app looks beside each date for a filled disc, reads the character inside it on its own (choosing among 一二三四五六日天), keeps the disc as artwork and makes only the character editable. The date keeps its own reading, minus anything the reader made of the badge.
 - **Date slashes:** a thin, long "/" (01/15) that the reader drops is put back when the date has a fifth, slanted mark between month and day.
-- **Text inside pictures** (a shop sign, a banner, a sheet of paper someone holds) is spotted by the small plain patch it sits on: the colour around it doesn't run on into the poster's background, and differs from what lies around the text or the patch. On 40 benchmark posters 2.1% of ordinary lines look like that. Because that guess is wrong now and then, the app lists these lines with a tick box each and converts only the ticked ones. Any converted line can be put back as picture with the picture button in the pop-up editor (**↶ Erase** undoes that).
+
+## Keep or convert
+
+After reading, the app asks about each doubtful part in turn: a cut-out of the original, what was read, and two big buttons. **Keep all the rest as picture** (or Esc) ends the questions.
+
+| What | Found by | Buttons |
+|---|---|---|
+| **Logo or organisation name** | Lines below an organiser/partner label (主辦、協辦、媒體、Organizers、Partners、Sponsors…), down to about five label-heights or the next heading lined up with the label. Pieces of one logo that touch are asked about together. | Keep as picture / Convert to text |
+| **Logo graphic** | Shapes standing out from the page within one lettering-height of a logo's lettering, outside confident text. | Keep as it is / Import new image |
+| **QR code** | Its three corner squares (runs of dark-light-dark-light-dark in the ratio 1:1:3:1:1 along a row and a column, three of similar size at a right angle). Readings inside it are dropped. | Keep as it is / Import new image |
+| **Text on a coloured box or shape** | Most of the reading box is one colour that differs clearly from just outside and a little further out, with lettering of a third colour (追根溯源 on its blue panel); an enclosed character (第④屆); a weekday disc (㊁). Converted text is measured, coloured and erased against the panel, so the panel stays. | Keep as picture / Convert to text |
+| **Hard to read** | Read below 50% confidence (usually logos or tiny print). | Keep as picture / Convert to text |
+| **Text inside a picture** | A sign, banner or sheet of paper: the small plain patch it sits on doesn't run on into the poster's background (2.1% of ordinary lines on 40 benchmark posters look like that). | Keep as picture / Convert to text |
+
+**Import new image** opens the photo picker; the image goes in as a movable, resizable box fitted inside the area, stored at most twice the area's size (sharp in 2× exports, light in saved templates), and the old picture under it is painted out (**↶ Erase** brings it back). Any converted line can be put back as picture with **Restore original (keep as picture)** in the pop-up editor.
+
+## Consistent fonts
+
+Each line first gets its own closest font, weight and size. Then:
+
+1. **Blocks:** rows close above each other (gap up to 1.2× the size), of similar size, the same colour and script (English and Chinese paragraphs stay apart), lined up or overlapping, plus items side by side on one row at the same letter height (names in a grid) form a block.
+2. **Kinds of text:** blocks of the same script and colour whose letters are the same size, measured in one reference font, are one kind of text across the page (all the names, all the headings, all the body text).
+3. Each kind takes its majority font and weight (counted by characters); each block takes its majority colour and, when its lines are nearly the same size (or most of a 3+ line paragraph agrees), one shared size. Letter spacing still matches each line's own width.
+
+Small dark text's colour estimates wobble, so two dark colours count as the same.
 - **Sizing:** each new line is fitted to the original letters' pixel bounds (not the OCR box); vertical columns are measured column by column. Letter height sets the font size, letter spacing absorbs width differences, and bold or regular is chosen by comparing stroke coverage. Text colour is the colour found inside the line that stops at its ends (background and artwork carry on past them), taken from the stroke centres; on the benchmark this raised colour accuracy from 61% to 72% with exact boxes, most for small text on artwork. Overlapping display lettering is shrunk just enough not to collide.
 - **Font:** the original letters are compared, shape against shape, with the same text drawn in each library font (Noto Sans TC, Noto Serif TC, Huninn 粉圓, Iansui 芫荽, all Taiwan standard forms), and the closest wins.
 - **Download size:** about 46 MB on first use (ONNX Runtime's CPU-only engine 14 MB, models 31 MB, plus small scripts; the full ONNX Runtime build's engine is 28 MB because it also carries WebGPU support this app doesn't use), then served from the browser's cache. While it downloads, the app shows megabytes done and an estimate of the time left.

@@ -482,6 +482,12 @@ h2[data-tip], .field[data-tip] > span:first-child, .check[data-tip] > span, .men
   resize: vertical;
 }
 .qe-row { display: flex; align-items: center; gap: 4px; margin-top: 6px; }
+/* An image box (new QR code or logo): only Replace and Delete apply. */
+.quick-edit.is-image #qeText, .quick-edit.is-image #qeFont, .quick-edit.is-image #qeKeep, .quick-edit.is-image .qe-row > :not(#qeDelete) { display: none; }
+.quick-edit:not(.is-image) #qeReplace { display: none; }
+.qe-keep { display: flex; width: 100%; min-height: 42px; margin-top: 6px; gap: 8px; font-size: 15px; font-weight: 600; }
+.qe-keep svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.qe-font { display: block; width: 100%; min-height: 40px; margin-top: 6px; font-size: 16px; } /* 16px: iPhone doesn't zoom in */
 .qe-btn {
   min-width: 38px;
   height: 38px;
@@ -539,8 +545,20 @@ h2[data-tip], .field[data-tip] > span:first-child, .check[data-tip] > span, .men
 /* Ask about text inside pictures */
 .art-body { padding: 12px 16px; }
 .art-body p { margin: 0 0 8px; }
-.art-list { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0 0 10px; padding: 0; }
-.art-list li { padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg); font-size: 15px; }
-.art-list label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
-.art-list input { width: 18px; height: 18px; }
+/* Keep or convert: one piece at a time, with a cut-out of the original. */
+.ask-dialog header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.ask-kind { font-weight: 700; font-size: 16px; }
+.ask-snip { display: flex; justify-content: center; padding: 8px; border: 1px solid var(--line); border-radius: var(--radius); background: repeating-conic-gradient(var(--bg) 0 25%, var(--panel) 0 50%) 0 0 / 16px 16px; }
+.ask-snip canvas { display: block; max-width: 100%; height: auto; max-height: 40vh; object-fit: contain; }
+.ask-read { margin-top: 10px !important; font-size: 16px; overflow-wrap: anywhere; }
+.ask-dialog footer.ask-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.ask-btn {
+  min-height: 56px;
+  font-size: 18px;
+  font-weight: 700;
+  border-width: 1.5px;
+  box-shadow: 0 4px 0 color-mix(in srgb, var(--accent) 35%, var(--line));
+}
+.ask-btn:active:not(:disabled) { transform: translateY(4px); box-shadow: 0 0 0 transparent, inset 0 3px 8px rgba(0, 0, 0, 0.3); }
+.ask-rest { text-align: center; margin: 0 0 12px; }
 .art-dialog footer { justify-content: flex-end; gap: 8px; }

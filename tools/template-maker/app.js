@@ -2,6 +2,7 @@ import { paddleDetect as detectText } from './paddle.js';
 import { t, applyI18n, setLang, getLang, LANGS } from './i18n.js';
 import {
   fileToCanvas, urlToCanvas, cloneCanvas, eraseText, canvasToBlob, inkBounds, letterMask, sampleRing, textColorByContrast, plainPatch,
+  panelUnder, findQRCodes, logoMark, makeCanvas, eraseBox,
 } from './imaging.js';
 import {
   FONTS, DEFAULT_FAMILY, MATCH_FAMILIES, ensureFontsLoaded, normalizeWeight, weightsOf, isBold, loadFontCss,
@@ -14,7 +15,7 @@ import {
 } from './storage.js';
 
 // Custom properties saved with each text object.
-const EXTRA_PROPS = ['vertical', 'ocr', 'fitBox', 'autoFit', 'eraseBox'];
+const EXTRA_PROPS = ['vertical', 'ocr', 'fitBox', 'autoFit', 'eraseBox', 'slot'];
 const $ = (sel) => document.querySelector(sel);
 
 const state = {
@@ -35,7 +36,7 @@ const state = {
 
 const canvas = new fabric.Canvas('c', {
   preserveObjectStacking: true,
-  // The canvas is already the photo's size (up to 2400 px), more pixels than
+  // The canvas is already the photo's size (up to 4096 px), more pixels than
   // a phone screen shows. Multiplying it by the screen density (3× on iPhone)
   // made a 7200×5400 surface: over Safari's canvas limit and enough memory to
   // get the tab closed.
@@ -630,14 +631,15 @@ function textFromLine(line, color) {
  * digits instead of enlarging them. Squeezing is limited to −8% of a
  * character; past that the font shrinks.
  */
-function fitToBox(o) {
+function fitToBox(o, size = null) {
   const { x0, y0, x1, y1 } = o.fitBox;
   const bw = x1 - x0;
   const bh = y1 - y0;
   const ink = inkAt100(o.text, o);
   const n = [...o.text].length;
   const MIN_SPACING = -80; // thousandths of the font size
-  let fs = (bh * 100) / Math.max(ink.height, 1);
+  // `size`: a paragraph's shared size (see harmoniseBlocks); else the letters' height decides.
+  let fs = size || (bh * 100) / Math.max(ink.height, 1);
   let spacing = n > 1 ? (((bw - (ink.width * fs) / 100) / (n - 1)) / fs) * 1000 : 0;
   if (spacing < MIN_SPACING) {
     fs = bw / (ink.width / 100 + ((n - 1) * MIN_SPACING) / 1000);
@@ -647,6 +649,107 @@ function fitToBox(o) {
   o.set({ charSpacing: Math.round(Math.min(2000, spacing)), scaleX: 1, scaleY: 1 });
   // Centre the letters on the original's: keeps the gaps between rows as in the photo.
   placeInk(o, ink, fs, (x0 + x1) / 2, (y0 + y1) / 2);
+}
+
+/**
+ * Lines of one paragraph or block share one font, weight, colour and size, as
+ * in the original, and each kind of text (names, headings, body text) shares
+ * one font and weight across the page (see style classes below). Each line's own guess can wobble (bold, then regular, then
+ * serif) on small differences; the block takes its majority, counted by
+ * characters. A block is rows close above each other, of similar size, the
+ * same colour and script (English and Chinese paragraphs stay apart), that
+ * line up (left, centre or right edges) or overlap; and items side by side
+ * on one row at the same size.
+ */
+function harmoniseBlocks(items) {
+  const rows = items.filter(({ o, line }) => !o.vertical && !line.badge && o.fitBox && o.text.trim());
+  const isHan = (text) => {
+    const chars = [...text.replace(/\s/g, '')];
+    return chars.filter((ch) => /\p{Script=Han}/u.test(ch)).length >= 0.5 * chars.length;
+  };
+  const rgb = (hex) => [1, 3, 5].map((i) => parseInt(String(hex).slice(i, i + 2), 16) || 0);
+  // Colour estimates of small dark text wobble (near-black vs dark grey): two
+  // dark colours count as the same.
+  const sameColour = (a, b, limit) => Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]) <= limit
+    || (Math.max(...a) < 120 && Math.max(...b) < 120);
+  const info = rows.map(({ o }) => ({ o, b: o.fitBox, fs: o.fontSize, han: isHan(o.text), c: rgb(o.fill), n: [...o.text.replace(/\s/g, '')].length }));
+  const together = (a, b) => {
+    if (a.han !== b.han) return false;
+    const fs = Math.min(a.fs, b.fs);
+    if (!sameColour(a.c, b.c, 90)) return false;
+    // Side by side on one row at the same size: items of one kind (the names
+    // in a speaker grid), which the original sets in one style.
+    // Sizes are compared by the letters' height in the photo here: each line's
+    // own font guess can make its size estimate differ by a third.
+    const ha = a.b.y1 - a.b.y0; const hb = b.b.y1 - b.b.y0;
+    if (Math.abs((a.b.y0 + a.b.y1) / 2 - (b.b.y0 + b.b.y1) / 2) <= 0.35 * Math.min(ha, hb) && Math.max(ha, hb) / Math.min(ha, hb) <= 1.35) {
+      return Math.max(a.b.x0, b.b.x0) - Math.min(a.b.x1, b.b.x1) <= 10 * Math.min(ha, hb);
+    }
+    if (Math.max(a.fs, b.fs) / fs > 1.25) return false;
+    const [top, low] = a.b.y0 <= b.b.y0 ? [a, b] : [b, a];
+    const gap = low.b.y0 - top.b.y1;
+    if (gap < -0.3 * fs || gap > 1.2 * fs) return false;
+    const overlap = Math.min(a.b.x1, b.b.x1) - Math.max(a.b.x0, b.b.x0);
+    const aligned = Math.abs(a.b.x0 - b.b.x0) <= fs || Math.abs(a.b.x1 - b.b.x1) <= fs
+      || Math.abs((a.b.x0 + a.b.x1) / 2 - (b.b.x0 + b.b.x1) / 2) <= fs;
+    return aligned || overlap >= 0.5 * Math.min(a.b.x1 - a.b.x0, b.b.x1 - b.b.x0);
+  };
+  // Union-find over the pairs that belong together.
+  const up = info.map((_, i) => i);
+  const root = (i) => { while (up[i] !== i) i = up[i] = up[up[i]]; return i; };
+  for (let i = 0; i < info.length; i++) for (let j = i + 1; j < info.length; j++) if (together(info[i], info[j])) up[root(i)] = root(j);
+  const blocks = new Map();
+  info.forEach((x, i) => { const r = root(i); if (!blocks.has(r)) blocks.set(r, []); blocks.get(r).push(x); });
+  const majority = (members, key) => {
+    const votes = new Map();
+    for (const x of members) votes.set(key(x), (votes.get(key(x)) || 0) + x.n);
+    return [...votes].sort((a, b) => b[1] - a[1])[0][0];
+  };
+  // Style classes: blocks of one kind of text across the page (all the names,
+  // all the headings, all the body text) share one font and weight. Same
+  // script, colour and shape (paragraph or short item), and letters of the
+  // same size, measured in one reference font so the comparison doesn't
+  // depend on each line's guess.
+  const ref = { fontFamily: DEFAULT_FAMILY, fontWeight: 400 };
+  for (const x of info) x.ref = ((x.b.y1 - x.b.y0) * 100) / Math.max(1, inkAt100(x.o.text, ref).height);
+  const list = [...blocks.values()].map((members) => {
+    const refs = members.map((x) => x.ref).sort((a, b) => a - b);
+    // Paragraphs (3+ lines, or long lines) are one kind; short items (names, labels) another.
+    const para = members.length >= 3 || Math.max(...members.map((x) => x.n)) > 40;
+    return { members, para, han: members[0].han, c: rgb(majority(members, (x) => x.o.fill)), ref: refs[refs.length >> 1] };
+  });
+  // Across the page only near-black counts as "the same dark" (body text,
+  // footers and dates are often different dark greys in different fonts).
+  const sameKindColour = (a, b) => Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]) <= 60
+    || (Math.max(...a) < 60 && Math.max(...b) < 60);
+  const cls = list.map((_, i) => i);
+  const top = (i) => { while (cls[i] !== i) i = cls[i] = cls[cls[i]]; return i; };
+  for (let i = 0; i < list.length; i++) {
+    for (let j = i + 1; j < list.length; j++) {
+      const a = list[i]; const b = list[j];
+      if (a.han === b.han && a.para === b.para && Math.max(a.ref, b.ref) / Math.min(a.ref, b.ref) <= 1.1 && sameKindColour(a.c, b.c)) cls[top(i)] = top(j);
+    }
+  }
+  const classes = new Map();
+  list.forEach((blk, i) => { const r = top(i); if (!classes.has(r)) classes.set(r, []); classes.get(r).push(blk); });
+  for (const group of classes.values()) {
+    const all = group.flatMap((blk) => blk.members);
+    const family = majority(all, (x) => x.o.fontFamily);
+    const weight = normalizeWeight(majority(all, (x) => normalizeWeight(x.o.fontWeight, family)), family);
+    for (const { members } of group) {
+      const fill = majority(members, (x) => x.o.fill);
+      for (const x of members) { x.o.set({ fontFamily: family, fontWeight: weight, fill }); fitToBox(x.o); }
+      // One size per block when its lines are nearly the same size already.
+      if (members.length < 2) continue;
+      // In a paragraph of 3+ lines where most agree, an odd one out was mis-measured.
+      const sizes = members.map((x) => x.o.fontSize).sort((a, b) => a - b);
+      const size = sizes[sizes.length >> 1];
+      const agree = sizes.filter((v) => Math.max(v, size) / Math.min(v, size) <= 1.15).length;
+      if (sizes[sizes.length - 1] / sizes[0] <= 1.2 || (members.length >= 3 && agree >= (2 / 3) * members.length)) {
+        for (const x of members) fitToBox(x.o, size);
+      }
+    }
+  }
 }
 
 /** After the text of a detected line changes, re-fit it to the original area (unless the user sized it). */
@@ -729,7 +832,8 @@ async function convertLines(lines) {
   const fitted = lines.map((l) => {
     const src = l.disc ? noDiscs : state.original;
     const han = [...l.text].filter((ch) => /\p{Script=Han}/u.test(ch)).length;
-    const bbox = inkBounds(src, l.bbox, { vertical: l.vertical, color: l.badge ? hexOf(l.badge.ink) : null, cjk: han >= 0.5 * [...l.text.replace(/\s/g, '')].length });
+    const known = l.badge ? hexOf(l.badge.ink) : l.panel ? hexOf(l.panel.text) : null;
+    const bbox = inkBounds(src, l.bbox, { vertical: l.vertical, color: known, cjk: han >= 0.5 * [...l.text.replace(/\s/g, '')].length });
     return { ...l, src, bbox };
   });
   splitStackedLines(fitted);
@@ -738,16 +842,17 @@ async function convertLines(lines) {
   const allText = fitted.map((l) => l.text).join('');
   await Promise.all(MATCH_FAMILIES.map(loadFontCss));
   await Promise.allSettled(MATCH_FAMILIES.flatMap((f) => weightsOf(f).map((w) => document.fonts.load(`${w} 40px "${f}"`, allText))));
-  const built = fitted.map((l) => textFromLine(l, l.badge ? hexOf(l.badge.ink) : textColorByContrast(l.src, l.bbox, l.vertical)));
+  const built = fitted.map((l) => textFromLine(l, l.badge ? hexOf(l.badge.ink) : l.panel ? hexOf(l.panel.text) : textColorByContrast(l.src, l.bbox, l.vertical)));
   await ensureFontsLoaded(built.map((b) => b.obj));
   built.forEach((b) => b.fit(b.obj));
+  harmoniseBlocks(built.map((b, i) => ({ o: b.obj, line: fitted[i] })));
   built.forEach((b, i) => {
     b.obj.ocrBox = fitted[i].bbox; // for checking the fit; not saved
     const e = lines[i].bbox;
     b.obj.set('eraseBox', { x0: e.x0, y0: e.y0, x1: e.x1, y1: e.y1 });
   });
   const g = state.clean.getContext('2d');
-  for (const l of lines) if (!l.badge) eraseText(state.clean, l.bbox, 2);
+  for (const l of lines) if (!l.badge) eraseText(state.clean, l.bbox, 2, l.panel ? { bg: l.panel.fill, fg: l.panel.text } : null);
   // Badge discs are artwork: put back any disc a date's erasing touched, then
   // repaint the inside of each badge's disc in its own colour, under the character.
   for (const l of lines) {
@@ -788,27 +893,180 @@ function looksLikePictureText(ib) {
   return patch.bounded && patch.ratio < 3 && Math.max(offset, patch.offset) >= 200;
 }
 
+// Enclosed numbers and characters (④, ㊁): printed on a disc or in a ring.
+const ENCLOSED = /[\u2460-\u24FF\u2776-\u2793\u3251-\u325F\u3280-\u32BF]/u;
+
+// Labels that introduce a row of logos ("主辦單位", "Organizers", "Media Partners").
+const LOGO_LABEL = /主辦|協辦|承辦|合辦|指導|贊助|支持|合作|夥伴|媒體|organi[sz]er|partner|sponsor|supported|presented by|hosted by/i;
+
 /**
- * Ask which of the lines that look like part of a picture should become
- * editable. Each has its own tick box; returns the ticked ones.
+ * Lines in a logo row: below an organiser/partner label, down to about five
+ * label-heights or the next heading lined up with the label (主辦單位 …
+ * 活動地點), whichever comes first. The labels themselves stay ordinary text.
  */
-function askAboutPictureText(lines) {
-  const dlg = $('#artDialog');
-  $('#artCount').textContent = t('artFound', { n: lines.length });
-  const boxes = lines.map(() => Object.assign(document.createElement('input'), { type: 'checkbox', checked: true }));
-  $('#artList').replaceChildren(...lines.map((l, i) => {
-    const li = document.createElement('li');
-    const label = document.createElement('label');
-    label.append(boxes[i], document.createTextNode(` ${l.text}`));
-    li.append(label);
-    return li;
-  }));
-  dlg.showModal();
+function logoLines(lines) {
+  const flat = lines.filter((l) => !l.vertical);
+  const labels = flat.filter((l) => LOGO_LABEL.test(l.text) && [...l.text].length <= 30);
+  const found = new Set();
+  for (const lab of labels) {
+    const h = lab.bbox.y1 - lab.bbox.y0;
+    const below = flat.filter((l) => !labels.includes(l) && l.bbox.y0 >= lab.bbox.y1 - 0.3 * h);
+    const next = below.filter((l) => l.bbox.y0 > lab.bbox.y1 + h && Math.abs(l.bbox.x0 - lab.bbox.x0) <= h && Math.abs((l.bbox.y1 - l.bbox.y0) / h - 1) < 0.3);
+    const stop = Math.min(lab.bbox.y1 + 5 * h, ...next.map((l) => l.bbox.y0));
+    for (const l of below) if (l.bbox.y0 < stop) found.add(l);
+  }
+  return found;
+}
+
+/** Open the photo picker; `use(file)` runs once a file is chosen. */
+function pickImage(use) {
+  const input = $('#slotInput');
+  input.value = '';
+  input.onchange = () => { const file = input.files[0]; if (file) use(file); };
+  input.click();
+}
+
+/**
+ * Put an image (a new QR code or logo) in `region` as a movable box, fitted
+ * inside it and centred. The image is stored at most twice the box's size:
+ * sharp in 2× exports, light in saved templates and undo history. With
+ * `replacing`, it swaps that image box; otherwise the old picture under the
+ * region is painted out (↶ Erase brings it back).
+ */
+async function placeImage(region, file, replacing = null) {
+  const src = await fileToCanvas(file);
+  const rw = region.x1 - region.x0; const rh = region.y1 - region.y0;
+  const k0 = Math.min(1, (2 * Math.max(rw, rh)) / Math.max(src.width, src.height));
+  const c = makeCanvas(Math.max(1, Math.round(src.width * k0)), Math.max(1, Math.round(src.height * k0)));
+  const g = c.getContext('2d');
+  g.imageSmoothingQuality = 'high';
+  g.drawImage(src, 0, 0, c.width, c.height);
+  releaseCanvas(src);
+  const url = c.toDataURL('image/png');
+  releaseCanvas(c);
+  const img = await fabric.FabricImage.fromURL(url);
+  const k = Math.min(rw / img.width, rh / img.height);
+  img.set({
+    originX: 'left', originY: 'top', scaleX: k, scaleY: k,
+    left: region.x0 + (rw - img.width * k) / 2, top: region.y0 + (rh - img.height * k) / 2,
+    slot: { x0: region.x0, y0: region.y0, x1: region.x1, y1: region.y1 },
+  });
+  if (replacing) {
+    canvas.remove(replacing);
+  } else {
+    const x = Math.max(0, Math.floor(region.x0)); const y = Math.max(0, Math.floor(region.y0));
+    const w = Math.min(state.clean.width - x, Math.ceil(rw)); const h = Math.min(state.clean.height - y, Math.ceil(rh));
+    state.eraseUndo.push({ x, y, data: state.clean.getContext('2d').getImageData(x, y, w, h) });
+    if (state.eraseUndo.length > 30) state.eraseUndo.shift();
+    eraseBox(state.clean, region, 0);
+    state.bgDirty = true;
+    setBackground(state.clean);
+  }
+  canvas.add(img);
+  canvas.setActiveObject(img);
+  canvas.requestRenderAll();
+  pushHistory();
+  refreshEnabled();
+}
+
+/** Run an export with backgroundWithImages(), freeing the copy afterwards. */
+async function withImageBackground(run) {
+  const bg = backgroundWithImages();
+  try { return await run(bg); } finally { if (bg !== state.clean) releaseCanvas(bg); }
+}
+
+/** The background with image boxes painted in, for exports that put text over one picture (PDF, PowerPoint, PSD). */
+function backgroundWithImages() {
+  const imgs = canvas.getObjects().filter((o) => o.type === 'image' && o.visible !== false);
+  if (!imgs.length) return state.clean;
+  const c = cloneCanvas(state.clean);
+  const g = c.getContext('2d');
+  for (const o of imgs) {
+    g.save();
+    g.globalAlpha = o.opacity ?? 1;
+    g.transform(...o.calcTransformMatrix());
+    g.drawImage(o.getElement(), -o.width / 2, -o.height / 2, o.width, o.height);
+    g.restore();
+  }
+  return c;
+}
+
+const unionBox = (lines) => ({
+  x0: Math.min(...lines.map((l) => l.bbox.x0)), y0: Math.min(...lines.map((l) => l.bbox.y0)),
+  x1: Math.max(...lines.map((l) => l.bbox.x1)), y1: Math.max(...lines.map((l) => l.bbox.y1)),
+});
+
+/**
+ * One question per logo: its pieces (東蓮覺苑 + TUNG LIN KOK YUEN) touch or
+ * nearly touch, while separate logos in a row have a clear gap between them.
+ */
+function groupLogoPieces(asks) {
+  const logos = asks.filter((a) => a.kind === 'logo');
+  const groups = [];
+  for (const a of logos) {
+    const l = a.lines[0];
+    const h = Math.min(l.bbox.y1 - l.bbox.y0, l.bbox.x1 - l.bbox.x0);
+    const near = (g) => g.lines.some((m) => {
+      const gap = Math.max(m.bbox.x0 - l.bbox.x1, l.bbox.x0 - m.bbox.x1, m.bbox.y0 - l.bbox.y1, l.bbox.y0 - m.bbox.y1);
+      return gap <= 0.5 * Math.min(h, m.bbox.y1 - m.bbox.y0);
+    });
+    const hits = groups.filter(near);
+    const merged = { kind: 'logo', lines: [l, ...hits.flatMap((g) => g.lines)] };
+    for (const g of hits) groups.splice(groups.indexOf(g), 1);
+    groups.push(merged);
+  }
+  return [...asks.filter((a) => a.kind !== 'logo'), ...groups];
+}
+
+/**
+ * Ask about each doubtful piece of text in turn: a cut-out of the original,
+ * what was read, and two big buttons, Keep (as part of the picture) or
+ * Convert (to editable text). Returns the lines to convert.
+ */
+function askKeepOrConvert(items) {
+  const dlg = $('#askDialog');
+  const snip = $('#askSnip');
+  const picked = [];
+  let i = 0;
   return new Promise((resolve) => {
-    const done = (picked) => { dlg.close(); resolve(picked); };
-    $('#artYes').onclick = () => done(lines.filter((_, i) => boxes[i].checked));
-    $('#artNo').onclick = () => done([]);
-    dlg.oncancel = (e) => { e.preventDefault(); done([]); };
+    const finish = () => { dlg.close(); releaseCanvas(snip); resolve(picked); };
+    const show = () => {
+      if (i >= items.length) { finish(); return; }
+      const { lines, kind, region } = items[i];
+      const byPlace = [...lines].sort((a, b) => a.bbox.y0 - b.bbox.y0 || a.bbox.x0 - b.bbox.x0);
+      $('#askStep').textContent = t('askStep', { i: i + 1, n: items.length });
+      $('#askKind').textContent = t(`askKind:${kind}`);
+      $('#askHint').textContent = t(`askHint:${kind}`);
+      $('#askRead').hidden = Boolean(region);
+      $('#askRead').textContent = region ? '' : t('askRead', { text: byPlace.map((l) => l.text).join(' / ') });
+      // A picture (QR code, emblem) is kept or swapped for a new image.
+      $('#askKeep').textContent = t(region ? 'askKeepImage' : 'askKeep');
+      $('#askConvert').textContent = t(region ? 'askImport' : 'askConvert');
+      $('#askRest').hidden = i === items.length - 1;
+      // The original around the text, with a little margin, at most 640 × 320.
+      const b = region || unionBox(lines);
+      const m = Math.max(6, 0.4 * Math.min(b.x1 - b.x0, b.y1 - b.y0));
+      const x0 = Math.max(0, b.x0 - m); const y0 = Math.max(0, b.y0 - m);
+      const x1 = Math.min(state.original.width, b.x1 + m); const y1 = Math.min(state.original.height, b.y1 + m);
+      const k = Math.min(640 / (x1 - x0), 320 / (y1 - y0), 4);
+      snip.width = Math.round((x1 - x0) * k); snip.height = Math.round((y1 - y0) * k);
+      const g = snip.getContext('2d');
+      g.imageSmoothingQuality = 'high';
+      g.drawImage(state.original, x0, y0, x1 - x0, y1 - y0, 0, 0, snip.width, snip.height);
+      if (!dlg.open) dlg.showModal();
+    };
+    $('#askKeep').onclick = () => { i++; show(); };
+    $('#askConvert').onclick = () => {
+      const { region } = items[i];
+      if (!region) { picked.push(...items[i].lines); i++; show(); return; }
+      // Import: on to the next question once an image is chosen (cancelling stays here).
+      pickImage(async (file) => {
+        if (await withBusy(t('placingImage'), () => placeImage(region, file).then(() => true))) { i++; show(); }
+      });
+    };
+    $('#askRest').onclick = finish;
+    dlg.oncancel = (e) => { e.preventDefault(); finish(); }; // Esc: keep the rest
+    show();
   });
 }
 
@@ -828,7 +1086,7 @@ async function runDetect() {
   if (!state.original) return;
   const existing = canvas.getObjects().filter((o) => o.ocr);
   if (existing.length && !confirm(t('confirmReplace'))) return;
-  let pictureLines = [];
+  let asks = [];
   await withBusy(t('detecting'), async () => {
     let lines = await detectText(state.original, {
       onProgress: (m) => setBusy(m.status === 'downloading' ? downloadLabel(m) : `${t(`ocr:${m.status}`).replace(/^ocr:/, '')}…`, typeof m.progress === 'number' ? m.progress : null),
@@ -841,14 +1099,43 @@ async function runDetect() {
     canvas.discardActiveObject();
     removeObjects(existing);
 
-    // Readings below 50% confidence are mostly logos and tiny print read as
-    // gibberish; leave those areas exactly as in the photo instead.
-    // (A weekday badge is kept: finding a disc beside a date already vouches for it.)
-    const skipped = lines.filter((l) => l.confidence < 50 && !l.badge).length;
-    lines = lines.filter((l) => l.confidence >= 50 || l.badge);
-    // A weekday badge (㊁) sits on its own disc; that isn't artwork text.
-    pictureLines = lines.filter((l) => !l.badge && looksLikePictureText(inkBounds(state.original, l.bbox, { vertical: l.vertical })));
-    lines = lines.filter((l) => !pictureLines.includes(l));
+    // Doubtful pieces are asked about one by one after the rest is converted:
+    // - logos and organisation names (a logo row, or read below 50%
+    //   confidence: mostly logos and tiny print) — usually best kept;
+    // - text on a coloured panel or shape (追根溯源 on its blue box, ④ and ㊁ on discs);
+    // - signs, banners and labels inside the artwork.
+    const logos = logoLines(lines);
+    for (const l of lines) {
+      l.panel = l.badge ? null : panelUnder(state.original, l.bbox);
+      // On a shape: a weekday disc (㊁), an enclosed character (第④屆), a panel.
+      const onShape = l.badge || ENCLOSED.test(l.text) || l.panel;
+      const kind = logos.has(l) ? 'logo'
+        : onShape ? 'panel'
+          : l.confidence < 50 ? 'unsure'
+            : looksLikePictureText(inkBounds(state.original, l.bbox, { vertical: l.vertical })) ? 'picture' : null;
+      if (kind) asks.push({ lines: [l], kind });
+    }
+    lines = lines.filter((l) => !asks.some((a) => a.lines.includes(l)));
+    asks = groupLogoPieces(asks);
+    // Pictures to swap rather than text: QR codes, and the emblem beside each
+    // logo's lettering. Readings inside a QR code are noise.
+    // Lettering: confident readings only (an emblem read as "空物" is not).
+    const lettering = [...lines, ...asks.flatMap((a) => a.lines)].filter((l) => [...l.text].length >= 2 && l.confidence >= 50).map((l) => l.bbox);
+    // Already replaced by an image box (Detect text again): don't ask again.
+    const slots = canvas.getObjects().filter((o) => o.slot).map((o) => o.slot);
+    const replaced = (r) => slots.some((b) => Math.min(b.x1, r.x1) - Math.max(b.x0, r.x0) > 0.5 * (r.x1 - r.x0) && Math.min(b.y1, r.y1) - Math.max(b.y0, r.y0) > 0.5 * (r.y1 - r.y0));
+    for (const g of asks.filter((a) => a.kind === 'logo')) {
+      const mark = logoMark(state.original, unionBox(g.lines), lettering);
+      if (mark && !replaced(mark)) asks.push({ kind: 'logoMark', region: mark, lines: [] });
+    }
+    for (const qr of findQRCodes(state.original)) {
+      const inQR = (l) => { const cx = (l.bbox.x0 + l.bbox.x1) / 2; const cy = (l.bbox.y0 + l.bbox.y1) / 2; return cx > qr.x0 && cx < qr.x1 && cy > qr.y0 && cy < qr.y1; };
+      lines = lines.filter((l) => !inQR(l));
+      asks = asks.filter((a) => !a.lines.length || !a.lines.every(inQR));
+      if (!replaced(qr)) asks.push({ kind: 'qr', region: qr, lines: [] });
+    }
+    const top = (a) => (a.region ? a.region.y0 : Math.min(...a.lines.map((l) => l.bbox.y0)));
+    asks.sort((a, b) => top(a) - top(b) || (b.region ? 1 : 0) - (a.region ? 1 : 0));
 
     const freeOld = replacePhoto(state.original, cloneCanvas(state.original));
     state.eraseUndo = [];
@@ -865,10 +1152,9 @@ async function runDetect() {
     const nVertical = lines.filter((l) => l.vertical).length;
     toast(lines.length
       ? `${t(lines.length === 1 ? 'foundOne' : 'foundMany', { n: lines.length })}${nVertical && nVertical < lines.length ? ` ${t('foundVertical', { n: nVertical })}` : ''}`
-      : t('noTextFound'), lines.length ? 'ok' : 'warn', skipped ? 7000 : 3500);
-    if (skipped) setTimeout(() => toast(t('keptAsPhoto', { n: skipped }), 'info', 6000), 3600);
+      : t('noTextFound'), lines.length ? 'ok' : 'warn', 3500);
   });
-  const picked = pictureLines.length ? await askAboutPictureText(pictureLines) : [];
+  const picked = asks.length ? await askKeepOrConvert(asks) : [];
   if (picked.length) {
     history.paused = true;
     const objs = await convertLines(picked);
@@ -902,12 +1188,18 @@ const active = () => {
   const o = canvas.getActiveObject();
   return isText(o) ? o : null;
 };
+/** The selected image box (a new QR code or logo), if that's what is selected. */
+const activeImage = () => {
+  const o = canvas.getActiveObject();
+  return o && o.type === 'image' ? o : null;
+};
 
 function renderProps() {
   const o = active();
-  $('#props').hidden = !o;
-  $('#noSelection').hidden = Boolean(o);
-  if (!o) { renderQuickEdit(); return; }
+  const textBox = Boolean(o);
+  $('#props').hidden = !textBox;
+  $('#noSelection').hidden = Boolean(textBox);
+  if (!textBox) { renderQuickEdit(); return; }
   const ta = $('#propText');
   if (document.activeElement !== ta) ta.value = o.vertical ? fromVertical(o.text) : o.text;
   $('#propFont').value = FONTS[o.fontFamily] ? o.fontFamily : DEFAULT_FAMILY;
@@ -938,13 +1230,18 @@ $('#propText').addEventListener('input', (e) => {
   if (!o) return;
   updateActive({ text: o.vertical ? toVertical(e.target.value) : e.target.value }).then(() => { refitIfAuto(o); canvas.requestRenderAll(); renderQuickEdit(); });
 });
-$('#propFont').addEventListener('change', async (e) => {
+/** Side panel and pop-up editor share this. A line still filling its original area re-fits to it. */
+async function setFont(family) {
   const o = active();
-  const family = e.target.value;
+  if (!o) return;
   await loadFontCss(family);
-  await updateActive({ fontFamily: family, fontWeight: normalizeWeight(o?.fontWeight, family) });
-  if (o) renderWeights(o);
-});
+  await updateActive({ fontFamily: family, fontWeight: normalizeWeight(o.fontWeight, family) });
+  refitIfAuto(o);
+  canvas.requestRenderAll();
+  renderProps();
+}
+$('#propFont').addEventListener('change', (e) => setFont(e.target.value));
+$('#qeFont').addEventListener('change', (e) => setFont(e.target.value));
 $('#propWeight').addEventListener('change', (e) => updateActive({ fontWeight: Number(e.target.value) }));
 $('#propSize').addEventListener('change', (e) => {
   const v = Number(e.target.value);
@@ -969,12 +1266,16 @@ $('#propVertical').addEventListener('change', (e) => setVertical(e.target.checke
 let transforming = false;
 function renderQuickEdit() {
   const box = $('#quickEdit');
-  const o = active();
+  const o = active() || activeImage();
   if (!o || o.isEditing || transforming || comparing || state.tool !== 'select') { box.hidden = true; return; }
+  const isImage = o.type === 'image';
+  box.classList.toggle('is-image', isImage);
+  if (isImage) { box.hidden = false; positionQuickEdit(); return; }
   const ta = $('#qeText');
   if (document.activeElement !== ta) ta.value = o.vertical ? fromVertical(o.text) : o.text;
   if (document.activeElement !== $('#qeSize')) $('#qeSize').value = Math.round(o.fontSize * o.scaleY);
   $('#qeColor').value = $('#propColor').value;
+  $('#qeFont').value = FONTS[o.fontFamily] ? o.fontFamily : DEFAULT_FAMILY;
   $('#qeBold').setAttribute('aria-pressed', String(isBold(o.fontWeight)));
   $('#qeVertical').setAttribute('aria-pressed', String(Boolean(o.vertical)));
   $('#qeKeep').hidden = !o.eraseBox;
@@ -984,7 +1285,7 @@ function renderQuickEdit() {
 
 function positionQuickEdit() {
   const box = $('#quickEdit');
-  const o = active();
+  const o = active() || activeImage();
   if (box.hidden || !o) return;
   const c = canvas.upperCanvasEl.getBoundingClientRect();
   const z = c.width / canvas.getWidth();
@@ -1033,8 +1334,14 @@ $('#qeBold').addEventListener('click', () => {
   if (o) updateActive({ fontWeight: normalizeWeight(isBold(o.fontWeight) ? 400 : 700, o.fontFamily) }).then(renderProps);
 });
 $('#qeVertical').addEventListener('click', () => { const o = active(); if (o) setVertical(!o.vertical); });
-$('#qeDelete').addEventListener('click', () => { const o = active(); if (o) canvas.remove(o); });
+$('#qeDelete').addEventListener('click', () => { const o = active() || activeImage(); if (o) canvas.remove(o); });
 $('#qeKeep').addEventListener('click', () => keepAsPicture(active()));
+$('#qeReplace').addEventListener('click', () => {
+  const o = activeImage();
+  if (!o) return;
+  const r = o.getBoundingRect();
+  pickImage((file) => withBusy(t('placingImage'), () => placeImage(o.slot || { x0: r.left, y0: r.top, x1: r.left + r.width, y1: r.top + r.height }, file, o)));
+});
 
 /** Undo the conversion of one line: remove its text box and put the photo's original pixels back. */
 function keepAsPicture(o) {
@@ -1208,6 +1515,8 @@ async function newFromFile(file) {
   await withBusy(t('loadingPhoto'), async () => {
     const original = await fileToCanvas(file);
     const freeOld = replacePhoto(original, cloneCanvas(original));
+    state.originalFile = original.sourceFile || null;
+    state.cleanFile = null;
     state.id = crypto.randomUUID();
     state.name = file.name.replace(/\.[^.]+$/, '') || t('untitled');
     state.bgDirty = true;
@@ -1232,6 +1541,12 @@ function currentStore() {
 }
 const storeKey = (store) => (store.isCloud ? `cloud:${state.user.id}` : 'local');
 
+async function savedBackground() {
+  if (!state.bgDirty && state.cleanFile) return state.cleanFile;
+  state.cleanFile = await canvasToBlob(state.clean, 'image/jpeg', 0.95);
+  return state.cleanFile;
+}
+
 async function buildRecord({ full = false } = {}) {
   const W = canvas.getWidth();
   const H = canvas.getHeight();
@@ -1243,8 +1558,10 @@ async function buildRecord({ full = false } = {}) {
     height: H,
     objects: serializeObjects(),
     thumbnail: canvas.toDataURL({ format: 'jpeg', quality: 0.7, multiplier: 320 / Math.max(W, H) }),
-    background: full || state.bgDirty ? await canvasToBlob(state.clean, 'image/jpeg', 0.92) : null,
-    original: state.original && (full || state.origDirty) ? await canvasToBlob(state.original, 'image/jpeg', 0.9) : null,
+    // Encoded as few times as possible: the uploaded file is kept as the
+    // original, and an unchanged background reuses its last saved copy.
+    background: full || state.bgDirty ? await savedBackground() : null,
+    original: state.original && (full || state.origDirty) ? state.originalFile || (state.originalFile = await canvasToBlob(state.original, 'image/jpeg', 0.95)) : null,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -1277,7 +1594,7 @@ async function closeDoc() {
   resetCanvas(800, 600);
   canvas.backgroundImage = null;
   replacePhoto(null, null)();
-  Object.assign(state, { id: null, name: '', bgDirty: false, origDirty: false, dirty: false, home: null, eraseUndo: [] });
+  Object.assign(state, { id: null, name: '', bgDirty: false, origDirty: false, dirty: false, home: null, eraseUndo: [], originalFile: null, cleanFile: null });
   $('#docName').value = '';
   resetHistory();
   updateTitle();
@@ -1321,6 +1638,8 @@ async function openRecord(rec, homeKey) {
   const clean = await toCanvas(rec.background);
   if (!clean) throw new Error(t('errNoBackground'));
   const freeOld = replacePhoto(await toCanvas(rec.original), clean);
+  state.originalFile = rec.original || null; // already encoded: saved again as is
+  state.cleanFile = rec.background || null;
   state.id = rec.id || crypto.randomUUID();
   state.name = rec.name || t('untitled');
   state.home = homeKey;
@@ -1410,16 +1729,16 @@ async function doExport(kind) {
   const scale = Number($('#exportScale').value) || 1;
   await withBusy(t('exporting', { kind: kind.toUpperCase() }), async () => {
     if (['png', 'jpeg', 'webp'].includes(kind)) {
-      await download(await exportRaster(canvas, kind, 0.92, scale), `${base}.${kind === 'jpeg' ? 'jpg' : kind}`);
+      await download(await exportRaster(canvas, kind, 0.95, scale), `${base}.${kind === 'jpeg' ? 'jpg' : kind}`);
     } else if (kind === 'pptx') {
-      await download(await exportPPTX(canvas, state.clean, state.name), `${base}.pptx`);
+      await withImageBackground((bg) => exportPPTX(canvas, bg, state.name)).then((f) => download(f, `${base}.pptx`));
       toast(t('pptxSaved'), 'ok', 8000);
     } else if (kind === 'svg') {
       await download(await exportSVG(canvas), `${base}.svg`);
     } else if (kind === 'pdf') {
-      await download(await exportPDF(canvas, state.clean, state.name, (msg) => setBusy(msg)), `${base}.pdf`);
+      await withImageBackground((bg) => exportPDF(canvas, bg, state.name, (msg) => setBusy(msg))).then((f) => download(f, `${base}.pdf`));
     } else if (kind === 'psd') {
-      await download(await exportPSD(canvas, state.clean, state.original), `${base}.psd`);
+      await withImageBackground((bg) => exportPSD(canvas, bg, state.original)).then((f) => download(f, `${base}.psd`));
       toast(t('psdSaved'), 'ok', 7000);
     } else if (kind === 'json') {
       await download(await recordToFile(await buildRecord({ full: true })), `${base}.template.json`);
@@ -1454,11 +1773,13 @@ function renderOptions() {
     }));
     return g;
   };
-  $('#propFont').replaceChildren(
-    group(t('fontsTaiwan'), MATCH_FAMILIES),
-    group(t('fontsOther'), Object.keys(FONTS).filter((f) => !MATCH_FAMILIES.includes(f))),
-  );
-  if (font) $('#propFont').value = font;
+  for (const sel of [$('#propFont'), $('#qeFont')]) {
+    sel.replaceChildren(
+      group(t('fontsTaiwan'), MATCH_FAMILIES),
+      group(t('fontsOther'), Object.keys(FONTS).filter((f) => !MATCH_FAMILIES.includes(f))),
+    );
+    if (font) sel.value = font;
+  }
   const o = active();
   if (o) renderWeights(o);
 }
@@ -1653,7 +1974,7 @@ function init() {
     if (typing) return;
     if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); (e.shiftKey ? redo : undo)(); return; }
     if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
-    if ((e.key === 'Delete' || e.key === 'Backspace') && active()) { e.preventDefault(); canvas.remove(active()); }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && (active() || activeImage())) { e.preventDefault(); canvas.remove(active() || activeImage()); }
     if (e.key === 'Escape' && state.tool !== 'select') setTool('select');
   });
   window.addEventListener('beforeunload', (e) => { if (state.dirty) e.preventDefault(); });

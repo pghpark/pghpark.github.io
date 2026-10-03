@@ -101,7 +101,7 @@ async function prepare(canvas) {
 // export fails or comes out blank, so 2× and 3× stop at that size.
 const MAX_CANVAS_AREA = 16777216;
 
-export async function exportRaster(canvas, format, quality = 0.92, multiplier = 1) {
+export async function exportRaster(canvas, format, quality = 0.95, multiplier = 1) {
   await prepare(canvas);
   const fit = Math.sqrt(MAX_CANVAS_AREA / (canvas.getWidth() * canvas.getHeight()));
   const el = canvas.toCanvasElement(Math.min(multiplier, fit));
@@ -146,7 +146,7 @@ export async function exportPDF(canvas, background, name, onProgress = () => {})
   const page = doc.addPage([W, H]);
 
   onProgress(t('encodingBackground'));
-  const bg = await doc.embedJpg(await (await canvasToBlob(background, 'image/jpeg', 0.92)).arrayBuffer());
+  const bg = await doc.embedJpg(await (await canvasToBlob(background, 'image/jpeg', 0.95)).arrayBuffer());
   page.drawImage(bg, { x: 0, y: 0, width: W, height: H });
 
   // One embedded font per family+weight, cut down to the characters used.
@@ -267,7 +267,7 @@ export async function exportPPTX(canvas, background, name) {
   pptx.layout = 'TEMPLATE';
   pptx.title = name || 'Template';
   const slide = pptx.addSlide();
-  const bg = await canvasToBlob(background, 'image/jpeg', 0.92);
+  const bg = await canvasToBlob(background, 'image/jpeg', 0.95);
   const bgData = await new Promise((resolve) => {
     const fr = new FileReader();
     fr.onload = () => resolve(fr.result);
