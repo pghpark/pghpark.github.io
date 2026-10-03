@@ -207,7 +207,8 @@ dialog header [data-close]:active { transform: translateY(3px); box-shadow: inse
 .menu summary { list-style: none; }
 .menu summary::-webkit-details-marker { display: none; }
 .menu-body {
-  min-width: 320px;
+  min-width: min(320px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
   position: absolute;
   right: 0;
   top: calc(100% + 4px);

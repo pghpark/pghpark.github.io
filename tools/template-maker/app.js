@@ -2347,6 +2347,19 @@ function init() {
   $('.menu summary').addEventListener('click', (e) => {
     if (e.currentTarget.hasAttribute('disabled')) e.preventDefault();
   });
+  // Keep the export menu on screen: under its button, ending at the button's
+  // right edge, moved in from either side of the screen when it would stick
+  // out (on a phone the button can wrap to the left of its row).
+  const placeMenu = () => {
+    const menu = $('.menu'); const body = $('.menu-body');
+    if (!menu.open) return;
+    body.style.left = ''; body.style.right = '';
+    const m = menu.getBoundingClientRect(); const w = body.offsetWidth;
+    const x = Math.min(Math.max(8, m.right - w), window.innerWidth - w - 8);
+    body.style.left = `${x - m.left}px`; body.style.right = 'auto';
+  };
+  $('.menu').addEventListener('toggle', placeMenu);
+  window.addEventListener('resize', placeMenu);
   document.querySelectorAll('[data-export]').forEach((b) => b.addEventListener('click', () => {
     b.closest('details').open = false;
     doExport(b.dataset.export);
