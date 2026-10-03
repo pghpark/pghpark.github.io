@@ -17,7 +17,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" crossorigin="anonymous" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&family=Noto+Serif+TC:wght@400;700&family=Huninn&family=Iansui&display=swap">
-  <link rel="stylesheet" href="style.css?v=2026-10-03.23">
+  <link rel="stylesheet" href="style.css?v=2026-10-03.25">
   <!-- Versions are pinned; see README.md before upgrading (Fabric 7 changed text positioning). -->
   <script crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/fabric@7.4.0/dist/index.min.js"></script>
   <script crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
@@ -29,18 +29,18 @@
        reader-worker.js isn't imported; it is listed so the offline store keeps it. -->
   <script type="importmap">
     {"imports": {
-      "./app.js": "./app.js?v=2026-10-03.23",
-      "./i18n.js": "./i18n.js?v=2026-10-03.23",
-      "./imaging.js": "./imaging.js?v=2026-10-03.23",
-      "./fonts.js": "./fonts.js?v=2026-10-03.23",
-      "./export.js": "./export.js?v=2026-10-03.23",
-      "./storage.js": "./storage.js?v=2026-10-03.23",
-      "./config.js": "./config.js?v=2026-10-03.23",
-      "./paddle.js": "./paddle.js?v=2026-10-03.23",
-      "./reader-worker.js": "./reader-worker.js?v=2026-10-03.23"
+      "./app.js": "./app.js?v=2026-10-03.25",
+      "./i18n.js": "./i18n.js?v=2026-10-03.25",
+      "./imaging.js": "./imaging.js?v=2026-10-03.25",
+      "./fonts.js": "./fonts.js?v=2026-10-03.25",
+      "./export.js": "./export.js?v=2026-10-03.25",
+      "./storage.js": "./storage.js?v=2026-10-03.25",
+      "./config.js": "./config.js?v=2026-10-03.25",
+      "./paddle.js": "./paddle.js?v=2026-10-03.25",
+      "./reader-worker.js": "./reader-worker.js?v=2026-10-03.25"
     }}
   </script>
-  <script type="module" src="app.js?v=2026-10-03.23"></script>
+  <script type="module" src="app.js?v=2026-10-03.25"></script>
 </head>
 <body>
   <header class="topbar">
@@ -216,7 +216,6 @@
           <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8" stroke-dasharray="2 3"/></svg><span data-i18n="intro5Tap">Tap a text: open its editor. Tap it again to type.</span></li>
           <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5M8.5 11h5M11 8.5v5"/></svg><span data-i18n="intro5Double">Double-tap an empty spot: zoom in there. Double-tap again: the whole poster.</span></li>
           <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4l6 6M4 4v4M4 4h4M20 20l-6-6M20 20v-4M20 20h-4"/></svg><span data-i18n="intro5Pinch">Two fingers: pinch to zoom.</span></li>
-          <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg><span data-i18n="intro5Move">To move a text box, tap it and press Move / resize, then drag. Press Done moving to lock it again.</span></li>
           <li><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg><span data-i18n="intro5Lock">The screen starts locked, so you can look around freely: taps don’t select any text. To edit, press Unlock to edit (top left of the poster).</span></li>
         </ul>
       </section>
@@ -262,6 +261,14 @@
       <button type="button" id="installLater" class="btn" data-i18n="installLater">Not now</button>
       <button type="button" id="installNow" class="btn primary" data-i18n="installNow" hidden>Install now</button>
       <button type="button" id="installOk" class="btn primary" data-i18n="installOk">Got it</button>
+    </footer>
+  </dialog>
+  <dialog id="lowResDialog" class="art-dialog">
+    <header><h2 data-i18n="lowResTitle">Low-resolution photo</h2></header>
+    <div class="art-body"><p id="lowResText"></p></div>
+    <footer>
+      <button type="button" id="lowResContinue" class="btn" data-i18n="lowResContinue">Continue anyway</button>
+      <button type="button" id="lowResOther" class="btn primary" data-i18n="lowResOther">Choose another photo</button>
     </footer>
   </dialog>
   <dialog id="closeDialog" class="art-dialog">
@@ -322,7 +329,6 @@
       <button type="button" id="qeVertical" class="qe-btn" aria-pressed="false" data-i18n-aria-label="vertical" data-i18n-title="vertical" aria-label="Vertical text" title="Vertical text">直</button>
       <button type="button" id="qeDelete" class="qe-btn danger" data-i18n-aria-label="delete" data-i18n-title="delete" aria-label="Delete" title="Delete"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></button>
     </div>
-    <button type="button" id="qeMove" class="btn qe-keep qe-move" data-tip="moveBox"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg><span data-i18n="moveBox">Move / resize</span></button>
     <button type="button" id="qeReplace" class="btn qe-keep" data-tip="replaceImage"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M21 16l-5-5-8 8"/></svg><span data-i18n="replaceImage">Replace image</span></button>
     <button type="button" id="qeKeep" class="btn qe-keep" data-tip="keepPicture"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M21 16l-5-5-8 8"/></svg><span data-i18n="keepPictureBtn">Restore original (keep as picture)</span></button>
   </div>

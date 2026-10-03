@@ -226,88 +226,43 @@ function zoomAround(z, clientX, clientY) {
 })();
 
 // Phones: one finger always moves the view, like a photo viewer, and never
-// drags a text box by accident (the layout is locked; see applyLock). The
-// browser scrolls it natively, with its own momentum: scrolling the page from
-// script made iPhone Safari's address bar slide in and out mid-gesture, and
-// the screen jumped. Only while a box is unlocked for moving does the app take
-// the finger over (and scroll from script when the finger is off the box). A tap selects the box under it and opens the pop-up
-// editor; tapping the selected text again types into it. A double tap on an
-// empty spot zooms in there, and again back to the whole poster. Pinch zooms.
-// A box unlocked with Move / resize is dragged as usual.
+// drags a text box (the layout is locked; see applyLock). The browser scrolls
+// it natively, with its own momentum: scrolling the page from script made
+// iPhone Safari's address bar slide in and out mid-gesture, and the screen
+// jumped. The app only watches for taps: a tap selects the box under it and
+// opens the pop-up editor; tapping the selected text again types into it. A
+// double tap on an empty spot zooms in there, and again back to the whole
+// poster. Pinch zooms.
 (() => {
   const stage = $('#stage');
   const TAP_SLOP = 10; // px a finger may wobble and still tap
   const TAP_MS = 450; // a slower press is a rest, not a tap
   let pan = null;
   let ownTouch = false; // this gesture is ours: keep its touch/mouse events from Fabric
-  let glide = 0;
   let lastTap = { o: null, t: 0, x: 0, y: 0 };
-  const onActiveUnlocked = (e) => {
-    const act = canvas.getActiveObject();
-    if (!act || !act.moveUnlocked) return false;
-    const pt = canvas.getScenePoint(e);
-    const r = act.getBoundingRect(); const pad = 24 / currentZoom(); // its handles too
-    return pt.x >= r.left - pad && pt.x <= r.left + r.width + pad && pt.y >= r.top - pad && pt.y <= r.top + r.height + pad;
-  };
   const hitAt = (e) => {
     const pt = canvas.getScenePoint(e);
     return [...canvas.getObjects()].reverse().find((o) => o.visible && o.evented !== false && o.selectable !== false && !o.temp && o.containsPoint(pt)) || null;
   };
-  // Scroll the photo area first; whatever it can't take scrolls the page.
-  const scrollBy = (dx, dy) => {
-    const sl = stage.scrollLeft; const st = stage.scrollTop;
-    stage.scrollLeft -= dx; stage.scrollTop -= dy;
-    window.scrollBy(-(dx + (stage.scrollLeft - sl)), -(dy + (stage.scrollTop - st)));
-  };
   const fitZoom = () => Math.min(1, (stage.clientWidth - 32) / canvas.getWidth(), (stage.clientHeight - 32) / canvas.getHeight());
-  // Native scrolling unless the finger is needed (decided before a touch starts).
-  const upper = canvas.upperCanvasEl;
-  const native = () => upper.style.touchAction !== 'none';
-  const syncTouchAction = () => {
-    const own = !!canvas.getActiveObject()?.moveUnlocked;
-    const want = own ? 'none' : 'pan-x pan-y';
-    if (upper.style.touchAction !== want) upper.style.touchAction = want;
-  };
-  if (TOUCH) { canvas.on('after:render', syncTouchAction); syncTouchAction(); }
+  // The browser scrolls (Fabric set the canvas to take every touch itself).
+  if (TOUCH) canvas.upperCanvasEl.style.touchAction = 'pan-x pan-y';
   window.addEventListener('pointerdown', (e) => {
     if (e.pointerType !== 'touch' || !hasDoc() || e.target !== canvas.upperCanvasEl) return;
-    cancelAnimationFrame(glide);
-    if (onActiveUnlocked(e)) return; // moving an unlocked box: Fabric's job
-    pan = { id: e.pointerId, x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, t0: Date.now(), moved: false, vx: 0, vy: 0, t: Date.now() };
+    pan = { id: e.pointerId, x0: e.clientX, y0: e.clientY, t0: Date.now(), moved: false };
     ownTouch = true;
     e.stopPropagation();
   }, true);
   window.addEventListener('pointermove', (e) => {
     if (!pan || e.pointerId !== pan.id) return;
     e.stopPropagation();
-    if (!pan.moved && Math.hypot(e.clientX - pan.x0, e.clientY - pan.y0) <= TAP_SLOP) return;
-    if (native()) { pan.moved = true; return; } // the browser is scrolling
-    if (!pan.moved) { pan.moved = true; pan.x = e.clientX; pan.y = e.clientY; return; }
-    const dx = e.clientX - pan.x; const dy = e.clientY - pan.y;
-    const now = Date.now(); const dt = Math.max(1, now - pan.t);
-    pan.vx = 0.8 * (dx / dt) + 0.2 * pan.vx; pan.vy = 0.8 * (dy / dt) + 0.2 * pan.vy; pan.t = now;
-    scrollBy(dx, dy);
-    pan.x = e.clientX; pan.y = e.clientY;
+    if (Math.hypot(e.clientX - pan.x0, e.clientY - pan.y0) > TAP_SLOP) pan.moved = true; // the browser is scrolling
   }, true);
   const end = (e) => {
     if (!pan || e.pointerId !== pan.id) return;
     e.stopPropagation();
     const p = pan; pan = null;
-    if (p.moved) {
-      if (native()) return; // the browser's own momentum
-      // Flick: keep gliding, slowing down.
-      let vx = p.vx * 16; let vy = p.vy * 16; // px per frame
-      if (Date.now() - p.t > 80 || e.type === 'pointercancel') return;
-      const step = () => {
-        vx *= 0.92; vy *= 0.92;
-        if (Math.abs(vx) + Math.abs(vy) < 0.5) return;
-        scrollBy(vx, vy);
-        glide = requestAnimationFrame(step);
-      };
-      glide = requestAnimationFrame(step);
-      return;
-    }
-    if (e.type === 'pointercancel' || Date.now() - p.t0 > TAP_MS) return;
+    if (p.moved || e.type === 'pointercancel' || Date.now() - p.t0 > TAP_MS) return;
     const hit = state.viewLock ? null : hitAt(e); // locked screen: taps never select
     const now = Date.now();
     const again = now - lastTap.t < 400 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 30;
@@ -457,15 +412,10 @@ async function redo() {
 }
 
 // On a phone the layout is locked: a finger moves the poster, never a text
-// box by accident (edited text stays where the original was). The pop-up's
-// Move / resize unlocks one box until it is deselected.
+// box (edited text stays where the original was).
 function applyLock(o) {
-  if (!o || o.temp) return;
-  const locked = TOUCH && !o.moveUnlocked;
-  o.set({ lockMovementX: locked, lockMovementY: locked, lockScalingX: locked, lockScalingY: locked, lockRotation: locked, hasControls: !locked });
-}
-function relockAll() {
-  for (const o of canvas.getObjects()) if (o.moveUnlocked) { o.moveUnlocked = false; applyLock(o); }
+  if (!o || o.temp || !TOUCH) return;
+  o.set({ lockMovementX: true, lockMovementY: true, lockScalingX: true, lockScalingY: true, lockRotation: true, hasControls: false });
 }
 
 let textChangeTimer;
@@ -483,8 +433,8 @@ canvas.on('text:changed', (e) => {
   textChangeTimer = setTimeout(() => { pushHistory(); renderLayers(); renderProps(); }, 400);
 });
 canvas.on('selection:created', () => { renderProps(); renderLayers(); });
-canvas.on('selection:updated', () => { for (const o of canvas.getObjects()) if (o.moveUnlocked && o !== canvas.getActiveObject()) { o.moveUnlocked = false; applyLock(o); } renderProps(); renderLayers(); });
-canvas.on('selection:cleared', () => { relockAll(); renderProps(); renderLayers(); });
+canvas.on('selection:updated', () => { renderProps(); renderLayers(); });
+canvas.on('selection:cleared', () => { renderProps(); renderLayers(); });
 
 /* ---------------- Text objects ---------------- */
 
@@ -1210,14 +1160,17 @@ function looksLikePictureText(ib) {
 }
 
 /**
- * A short reading with no Chinese in it, among busy artwork: usually carvings,
- * ornaments or foliage that the reader took for letters or digits. A real
- * number or word on a poster sits on plain or smoothly shaded ground.
+ * A short reading with no Chinese in it, standing out only weakly, among busy
+ * artwork: usually carvings, ornaments or foliage that the reader took for
+ * letters or digits ("15100" on a temple roof: contrast 193). Printed numbers
+ * stand out strongly even over illustrations (dates 01/15 and 2019 over
+ * fireworks: 450 and more; a year on a photo: 306).
  */
 function looksLikePattern(line, lines) {
   const chars = [...line.text.replace(/\s/g, '')];
   if (chars.length > 6 || chars.some((ch) => /\p{Script=Han}/u.test(ch))) return false;
-  return busyAround(state.original, line.bbox, lines.filter((o) => o !== line).map((o) => o.bbox)) > 0.1;
+  return inkContrast(state.original, line.bbox) < 250
+    && busyAround(state.original, line.bbox, lines.filter((o) => o !== line).map((o) => o.bbox)) > 0.1;
 }
 
 // Enclosed numbers and characters (④, ㊁): printed on a disc or in a ring.
@@ -1628,9 +1581,6 @@ function renderQuickEdit() {
   if (!o || o.isEditing || transforming || comparing) { box.hidden = true; return; }
   const isImage = o.type === 'image';
   box.classList.toggle('is-image', isImage);
-  $('#qeMove').hidden = !TOUCH;
-  $('#qeMove').classList.toggle('active', Boolean(o.moveUnlocked));
-  $('#qeMove').querySelector('span').textContent = t(o.moveUnlocked ? 'moveDone' : 'moveBox');
   if (isImage) { box.hidden = false; positionQuickEdit(); return; }
   const ta = $('#qeText');
   if (document.activeElement !== ta) ta.value = editableText(o);
@@ -1717,17 +1667,6 @@ $('#qeBold').addEventListener('click', () => {
 $('#qeVertical').addEventListener('click', () => { const o = active(); if (o) setVertical(!o.vertical); });
 $('#qeDelete').addEventListener('click', () => { const o = active() || activeImage(); if (o) canvas.remove(o); });
 $('#qeKeep').addEventListener('click', () => keepAsPicture(active()));
-$('#qeMove').addEventListener('click', () => {
-  const o = active() || activeImage();
-  if (!o) return;
-  o.moveUnlocked = !o.moveUnlocked;
-  applyLock(o);
-  canvas.requestRenderAll();
-  renderQuickEdit();
-  // Unlocked: step aside so the box and its handles are free to drag (the
-  // pop-up comes back after the move), and say what to do.
-  if (o.moveUnlocked) { $('#quickEdit').hidden = true; toast(t('moveHint'), 'info', 4000); }
-});
 $('#qeReplace').addEventListener('click', () => {
   const o = activeImage();
   if (!o) return;
@@ -1861,13 +1800,36 @@ function confirmDiscard() {
   return !state.dirty || confirm(t('confirmDiscard'));
 }
 
+// Photos smaller than this on their shorter side get a warning before reading:
+// small print in them is often misread (690 px: the address line came out wrong).
+const MIN_PHOTO_SIDE = 800;
+/** Resolves true to go on with a small photo, false to choose another. */
+function lowResOk(c) {
+  const dlg = $('#lowResDialog');
+  $('#lowResText').textContent = t('lowResText', { w: c.width, h: c.height, min: MIN_PHOTO_SIDE });
+  dlg.showModal();
+  return new Promise((resolve) => {
+    const done = (ok) => { dlg.close(); resolve(ok); };
+    $('#lowResContinue').onclick = () => done(true);
+    $('#lowResOther').onclick = () => done(false);
+    dlg.oncancel = (e) => { e.preventDefault(); done(false); };
+  });
+}
+
 async function newFromFile(file) {
   // Some systems give HEIC/AVIF files an empty MIME type, so fall back to the extension.
   const looksLikeImage = file && (file.type.startsWith('image/') || /\.(jpe?g|png|webp|gif|bmp|avif|heic|heif)$/i.test(file.name));
   if (!looksLikeImage) { toast(t('notImage'), 'warn', 6000); return; }
   if (!confirmDiscard()) return;
+  const original = await withBusy(t('loadingPhoto'), () => fileToCanvas(file));
+  if (!original) return;
+  // A small photo reads poorly: ask for a sharper one, or go on anyway.
+  if (Math.min(original.width, original.height) < MIN_PHOTO_SIDE && !(await lowResOk(original))) {
+    releaseCanvas(original);
+    $('#fileInput').click();
+    return;
+  }
   await withBusy(t('loadingPhoto'), async () => {
-    const original = await fileToCanvas(file);
     const freeOld = replacePhoto(original, cloneCanvas(original));
     state.originalFile = original.sourceFile || null;
     state.cleanFile = null;

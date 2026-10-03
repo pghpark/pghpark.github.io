@@ -558,7 +558,6 @@ h2[data-tip], .field[data-tip] > span:first-child, .check[data-tip] > span, .men
 .qe-row { display: flex; align-items: center; gap: 4px; margin-top: 6px; }
 /* An image box (new QR code or logo): only Replace and Delete apply. */
 .quick-edit.is-image #qeText, .quick-edit.is-image #qeFont, .quick-edit.is-image #qeKeep, .quick-edit.is-image .qe-row > :not(#qeDelete) { display: none; }
-.qe-move.active { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 .quick-edit:not(.is-image) #qeReplace { display: none; }
 .qe-keep { display: flex; width: 100%; min-height: 42px; margin-top: 6px; gap: 8px; font-size: 15px; font-weight: 600; }
 .qe-keep svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }

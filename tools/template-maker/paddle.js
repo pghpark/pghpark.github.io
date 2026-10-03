@@ -363,7 +363,7 @@ async function readAll(source, reader, chars, cn2tw, notify) {
     const lines = [];
     results.forEach((r, i) => {
       // A few non-text marks get a box and a near-zero score ("C" at 4%).
-      if (r.text && r.confidence >= 20) lines.push({ ...r, text: toTaiwan(r.text, cn2tw), bbox: boxes[i], detScore: boxes[i].score });
+      if (r.text && r.confidence >= 20) lines.push({ ...r, text: fixMisreads(toTaiwan(r.text, cn2tw)), bbox: boxes[i], detScore: boxes[i].score });
     });
     read.push(lines);
   }
@@ -501,7 +501,9 @@ async function readBadges(source, lines, read) {
     // Dates only (01/15, 0115, 8月10日), allowing a stray letter or two where the badge was misread.
     if (line.vertical || !/^\d{1,2}\s*[/.\-月]?\s*\d{1,2}\s*日?\s*[A-Za-z()（）○◯]{0,2}$/.test(line.text.trim()) || (line.text.match(/\d/g) || []).length < 3) continue;
     const b = line.bbox; const h = b.y1 - b.y0;
-    const rx0 = Math.max(0, Math.floor(b.x0)); const rx1 = Math.min(W, Math.ceil(b.x1 + 1.5 * h));
+    // The disc comes after the date: search from about the last character on
+    // (inside bold digits a disc-like solid spot was taken for it).
+    const rx0 = Math.max(0, Math.floor(Math.max(b.x0, b.x1 - 1.2 * h))); const rx1 = Math.min(W, Math.ceil(b.x1 + 1.5 * h));
     const ry0 = Math.max(0, Math.floor(b.y0 - 0.3 * h)); const ry1 = Math.min(H, Math.ceil(b.y1 + 0.3 * h));
     const rw = rx1 - rx0; const rh = ry1 - ry0;
     if (rw < 8 || rh < 8) continue;
@@ -732,6 +734,11 @@ function mergePieces(lines) {
 // Characters that are also standard Traditional characters in their own right
 // (涂 is a surname, not only Simplified for 塗): never converted.
 const KEEP_AS_READ = new Set([...'台涂余干后里范松谷只冲准系制卷征云丑斗了凶朴']);
+
+// Look-alike misreads that are never words, fixed after reading: 入 and 人
+// differ by one stroke's angle ("免費人場" for 免費入場).
+const MISREADS = [[/人場/g, '入場'], [/人口處/g, '入口處'], [/人座/g, '入座']];
+function fixMisreads(text) { return MISREADS.reduce((t, [re, to]) => t.replace(re, to), text); }
 
 function toTaiwan(text, cn2tw) {
   const out = cn2tw(text);
