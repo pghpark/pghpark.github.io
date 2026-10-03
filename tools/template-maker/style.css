@@ -102,6 +102,9 @@ body {
 .intro-icons small { font-size: 14px; text-align: center; color: var(--muted); }
 .intro-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
 .intro-chips span { padding: 8px 14px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 12%, var(--panel)); color: var(--accent); font-weight: 700; font-size: 15px; }
+.intro-gestures { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 12px; }
+.intro-gestures li { display: flex; align-items: center; gap: 12px; font-size: 16px; line-height: 1.5; }
+.intro-gestures svg { flex: 0 0 auto; width: 44px; height: 44px; padding: 9px; box-sizing: border-box; border-radius: 12px; background: color-mix(in srgb, var(--accent) 12%, var(--panel)); color: var(--accent); fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .intro-dots { display: flex; justify-content: center; gap: 8px; padding: 10px 0 4px; }
 .intro-dots i { width: 8px; height: 8px; border-radius: 50%; background: var(--line); transition: width 0.2s, background 0.2s; }
 .intro-dots i.on { width: 22px; border-radius: 4px; background: var(--accent); }
@@ -450,6 +453,8 @@ dialog form, dialog > p { padding: 12px 16px; margin: 0; }
 .toolbar .btn.big:disabled { box-shadow: none; }
 .zoom-field select { min-height: 44px; }
 .btn.grow { flex: 1; }
+.wipe-btn { gap: 8px; min-height: 44px; font-weight: 600; }
+.wipe-btn .ico { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 /* No double-tap-to-zoom delay, so Undo can be tapped quickly. */
 .btn { touch-action: manipulation; }
 .toolbar-sep { width: 1px; align-self: stretch; margin: 4px 2px; background: var(--line); flex-shrink: 0; }
@@ -543,6 +548,7 @@ h2[data-tip], .field[data-tip] > span:first-child, .check[data-tip] > span, .men
 .qe-row { display: flex; align-items: center; gap: 4px; margin-top: 6px; }
 /* An image box (new QR code or logo): only Replace and Delete apply. */
 .quick-edit.is-image #qeText, .quick-edit.is-image #qeFont, .quick-edit.is-image #qeKeep, .quick-edit.is-image .qe-row > :not(#qeDelete) { display: none; }
+.qe-move.active { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 .quick-edit:not(.is-image) #qeReplace { display: none; }
 .qe-keep { display: flex; width: 100%; min-height: 42px; margin-top: 6px; gap: 8px; font-size: 15px; font-weight: 600; }
 .qe-keep svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }

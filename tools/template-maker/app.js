@@ -1,7 +1,7 @@
 import { paddleDetect as detectText } from './paddle.js';
 import { t, applyI18n, setLang, getLang, LANGS } from './i18n.js';
 import {
-  fileToCanvas, urlToCanvas, cloneCanvas, eraseText, canvasToBlob, inkBounds, letterMask, sampleRing, textColorByContrast, plainPatch,
+  fileToCanvas, urlToCanvas, cloneCanvas, eraseText, canvasToBlob, inkBounds, letterMask, sampleRing, textColorByContrast, plainPatch, busyAround, inkContrast,
   panelUnder, findQRCodes, logoMark, makeCanvas, eraseBox,
 } from './imaging.js';
 import {
@@ -29,7 +29,6 @@ const state = {
   home: null, // key of the store this template was last saved to
   tool: 'select',
   zoom: 'fit',
-  eraseUndo: [],
   stores: { local: new LocalStore(), cloud: null },
   user: null,
 };
@@ -110,7 +109,6 @@ function refreshEnabled() {
   $('#canvasWrap').hidden = !on;
   $('#detectBtn').disabled = !state.original;
   $('#compareBtn').hidden = !state.original;
-  $('#undoEraseBtn').disabled = !state.eraseUndo.length;
 }
 
 /* ---------------- Canvas / zoom ---------------- */
@@ -225,46 +223,111 @@ function zoomAround(z, clientX, clientY) {
   }, { passive: false });
 })();
 
-// One finger on the photo's empty area moves the view, like scrolling a
-// picture (it used to draw a selection box). On a text box it still selects
-// and drags it; a short tap on the empty area still clears the selection.
+// Phones: one finger always moves the view, like a photo viewer (a flick
+// keeps gliding), and never drags a text box by accident (the layout is
+// locked; see applyLock). A tap selects the box under it and opens the pop-up
+// editor; tapping the selected text again types into it. A double tap on an
+// empty spot zooms in there, and again back to the whole poster. Pinch zooms.
+// A box unlocked with Move / resize is dragged as usual.
 (() => {
   const stage = $('#stage');
+  const TAP_SLOP = 10; // px a finger may wobble and still tap
+  const TAP_MS = 450; // a slower press is a rest, not a tap
   let pan = null;
-  const onText = (e) => {
-    const pt = canvas.getScenePoint(e);
+  let ownTouch = false; // this gesture is ours: keep its touch/mouse events from Fabric
+  let glide = 0;
+  let lastTap = { o: null, t: 0, x: 0, y: 0 };
+  const onActiveUnlocked = (e) => {
     const act = canvas.getActiveObject();
-    if (act) {
-      const r = act.getBoundingRect(); const pad = 24 / currentZoom(); // its handles too
-      if (pt.x >= r.left - pad && pt.x <= r.left + r.width + pad && pt.y >= r.top - pad && pt.y <= r.top + r.height + pad) return true;
-    }
-    return canvas.getObjects().some((o) => o.visible && o.evented !== false && o.containsPoint(pt));
+    if (!act || !act.moveUnlocked) return false;
+    const pt = canvas.getScenePoint(e);
+    const r = act.getBoundingRect(); const pad = 24 / currentZoom(); // its handles too
+    return pt.x >= r.left - pad && pt.x <= r.left + r.width + pad && pt.y >= r.top - pad && pt.y <= r.top + r.height + pad;
   };
+  const hitAt = (e) => {
+    const pt = canvas.getScenePoint(e);
+    return [...canvas.getObjects()].reverse().find((o) => o.visible && o.evented !== false && o.selectable !== false && !o.temp && o.containsPoint(pt)) || null;
+  };
+  // Scroll the photo area first; whatever it can't take scrolls the page.
+  const scrollBy = (dx, dy) => {
+    const sl = stage.scrollLeft; const st = stage.scrollTop;
+    stage.scrollLeft -= dx; stage.scrollTop -= dy;
+    window.scrollBy(-(dx + (stage.scrollLeft - sl)), -(dy + (stage.scrollTop - st)));
+  };
+  const fitZoom = () => Math.min(1, (stage.clientWidth - 32) / canvas.getWidth(), (stage.clientHeight - 32) / canvas.getHeight());
   window.addEventListener('pointerdown', (e) => {
-    if (e.pointerType !== 'touch' || state.tool !== 'select' || !hasDoc() || e.target !== canvas.upperCanvasEl || onText(e)) return;
-    pan = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: false };
+    if (e.pointerType !== 'touch' || state.tool !== 'select' || !hasDoc() || e.target !== canvas.upperCanvasEl) return;
+    cancelAnimationFrame(glide);
+    if (onActiveUnlocked(e)) return; // moving an unlocked box: Fabric's job
+    pan = { id: e.pointerId, x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, t0: Date.now(), moved: false, vx: 0, vy: 0, t: Date.now() };
+    ownTouch = true;
     e.stopPropagation();
   }, true);
   window.addEventListener('pointermove', (e) => {
     if (!pan || e.pointerId !== pan.id) return;
     e.stopPropagation();
+    if (!pan.moved && Math.hypot(e.clientX - pan.x0, e.clientY - pan.y0) <= TAP_SLOP) return;
+    if (!pan.moved) { pan.moved = true; pan.x = e.clientX; pan.y = e.clientY; return; }
     const dx = e.clientX - pan.x; const dy = e.clientY - pan.y;
-    if (Math.abs(dx) + Math.abs(dy) > 6) pan.moved = true;
-    // Scroll the photo area first; whatever it can't take scrolls the page.
-    const sl = stage.scrollLeft; const st = stage.scrollTop;
-    stage.scrollLeft -= dx; stage.scrollTop -= dy;
-    window.scrollBy(-(dx + (stage.scrollLeft - sl)), -(dy + (stage.scrollTop - st)));
+    const now = Date.now(); const dt = Math.max(1, now - pan.t);
+    pan.vx = 0.8 * (dx / dt) + 0.2 * pan.vx; pan.vy = 0.8 * (dy / dt) + 0.2 * pan.vy; pan.t = now;
+    scrollBy(dx, dy);
     pan.x = e.clientX; pan.y = e.clientY;
   }, true);
   const end = (e) => {
     if (!pan || e.pointerId !== pan.id) return;
     e.stopPropagation();
-    if (!pan.moved) { canvas.discardActiveObject(); canvas.requestRenderAll(); }
-    pan = null;
+    const p = pan; pan = null;
+    if (p.moved) {
+      // Flick: keep gliding, slowing down.
+      let vx = p.vx * 16; let vy = p.vy * 16; // px per frame
+      if (Date.now() - p.t > 80 || e.type === 'pointercancel') return;
+      const step = () => {
+        vx *= 0.92; vy *= 0.92;
+        if (Math.abs(vx) + Math.abs(vy) < 0.5) return;
+        scrollBy(vx, vy);
+        glide = requestAnimationFrame(step);
+      };
+      glide = requestAnimationFrame(step);
+      return;
+    }
+    if (e.type === 'pointercancel' || Date.now() - p.t0 > TAP_MS) return;
+    const hit = hitAt(e);
+    const now = Date.now();
+    const again = now - lastTap.t < 400 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 30;
+    if (hit) {
+      if (hit === canvas.getActiveObject() && hit.enterEditing && lastTap.o === hit && now - lastTap.t < 1500) {
+        hit.enterEditing(); // tapping the selected text again: type into it
+        hit.selectAll?.();
+      } else {
+        canvas.setActiveObject(hit);
+        renderProps(); renderLayers();
+      }
+    } else if (again && !lastTap.o) {
+      // Double tap on an empty spot: zoom in there, or back to the whole poster.
+      if (currentZoom() > fitZoom() * 1.3) { state.zoom = 'fit'; applyZoom(); }
+      else zoomAround(Math.min(ZOOM_MAX, currentZoom() * 2.5), e.clientX, e.clientY);
+    } else {
+      canvas.discardActiveObject();
+    }
+    lastTap = { o: hit, t: now, x: e.clientX, y: e.clientY };
+    canvas.requestRenderAll();
   };
   window.addEventListener('pointerup', end, true);
   window.addEventListener('pointercancel', end, true);
-  stage.addEventListener('touchstart', (e) => { if (e.touches.length > 1) pan = null; }, { capture: true }); // a pinch takes over
+  // The same gesture's touch events (and the mouse events a tap makes) stay
+  // ours too: otherwise Fabric took a tap on a selected box as "start typing".
+  window.addEventListener('touchstart', (e) => {
+    if (e.touches.length > 1) { ownTouch = false; pan = null; return; } // a pinch takes over
+    if (ownTouch) e.stopPropagation();
+  }, true);
+  window.addEventListener('touchmove', (e) => { if (ownTouch && e.touches.length === 1) e.stopPropagation(); }, true);
+  window.addEventListener('touchend', (e) => {
+    if (!ownTouch) return;
+    e.stopPropagation();
+    if (e.cancelable) e.preventDefault(); // no mouse events or click from this tap
+    if (!e.touches.length) ownTouch = false;
+  }, { capture: true, passive: false });
 })();
 new ResizeObserver(() => state.zoom === 'fit' && applyZoom()).observe($('#stage'));
 
@@ -293,13 +356,15 @@ function resetCanvas(w, h) {
   canvas.discardActiveObject();
   removeObjects(canvas.getObjects());
   canvas.setDimensions({ width: w, height: h });
-  state.eraseUndo = [];
   setTool('select');
 }
 
 /* ---------------- History (text objects only) ---------------- */
 
-const history = { stack: [], index: -1, paused: false };
+// Undo history: a snapshot of the text/image boxes per step. A step that also
+// changed the photo (wiping an area, restoring an original, placing a new QR
+// code or logo) carries a patch with the pixels before and after.
+const history = { stack: [], patches: [], index: -1, paused: false };
 
 function serializeObjects() {
   return canvas.getObjects().filter((o) => !o.temp).map((o) => o.toObject(EXTRA_PROPS));
@@ -307,18 +372,41 @@ function serializeObjects() {
 
 function resetHistory() {
   history.stack = [JSON.stringify(serializeObjects())];
+  history.patches = [null];
   history.index = 0;
 }
 
-function pushHistory() {
+function pushHistory(patch = null) {
   if (history.paused) return;
   const snap = JSON.stringify(serializeObjects());
-  if (snap === history.stack[history.index]) return;
+  if (snap === history.stack[history.index] && !patch) return;
   history.stack = history.stack.slice(0, history.index + 1);
+  history.patches = history.patches.slice(0, history.index + 1);
   history.stack.push(snap);
-  if (history.stack.length > 80) history.stack.shift();
+  history.patches.push(patch);
+  if (history.stack.length > 80) { history.stack.shift(); history.patches.shift(); }
   history.index = history.stack.length - 1;
   markDirty();
+}
+
+/** Change part of the photo (state.clean) with `paint()`, returning the before/after patch for the history. */
+function patchBackground(box, paint, pad = 0) {
+  const x = Math.max(0, Math.floor(box.x0 - pad)); const y = Math.max(0, Math.floor(box.y0 - pad));
+  const w = Math.max(1, Math.min(state.clean.width - x, Math.ceil(box.x1 - box.x0 + 2 * pad)));
+  const h = Math.max(1, Math.min(state.clean.height - y, Math.ceil(box.y1 - box.y0 + 2 * pad)));
+  const g = state.clean.getContext('2d');
+  const before = g.getImageData(x, y, w, h);
+  paint(g, { x, y, w, h });
+  const after = g.getImageData(x, y, w, h);
+  state.bgDirty = true;
+  setBackground(state.clean);
+  return { x, y, before, after };
+}
+
+function applyPatch(patch, which) {
+  state.clean.getContext('2d').putImageData(patch[which], patch.x, patch.y);
+  state.bgDirty = true;
+  setBackground(state.clean);
 }
 
 async function restoreObjects(objects) {
@@ -336,6 +424,8 @@ async function restoreObjects(objects) {
 
 async function undo() {
   if (history.index <= 0) return;
+  const patch = history.patches[history.index];
+  if (patch) applyPatch(patch, 'before');
   history.index--;
   await restoreObjects(JSON.parse(history.stack[history.index]));
   markDirty();
@@ -344,12 +434,27 @@ async function undo() {
 async function redo() {
   if (history.index >= history.stack.length - 1) return;
   history.index++;
+  const patch = history.patches[history.index];
+  if (patch) applyPatch(patch, 'after');
   await restoreObjects(JSON.parse(history.stack[history.index]));
   markDirty();
 }
 
+// On a phone the layout is locked: a finger moves the poster, never a text
+// box by accident (edited text stays where the original was). The pop-up's
+// Move / resize unlocks one box until it is deselected.
+const TOUCH = matchMedia('(pointer: coarse)').matches;
+function applyLock(o) {
+  if (!o || o.temp) return;
+  const locked = TOUCH && !o.moveUnlocked;
+  o.set({ lockMovementX: locked, lockMovementY: locked, lockScalingX: locked, lockScalingY: locked, lockRotation: locked, hasControls: !locked });
+}
+function relockAll() {
+  for (const o of canvas.getObjects()) if (o.moveUnlocked) { o.moveUnlocked = false; applyLock(o); }
+}
+
 let textChangeTimer;
-canvas.on('object:added', () => { pushHistory(); renderLayers(); });
+canvas.on('object:added', (e) => { applyLock(e.target); pushHistory(); renderLayers(); });
 canvas.on('object:removed', () => { pushHistory(); renderLayers(); });
 canvas.on('object:modified', (e) => {
   // Moving or resizing a box by hand means the user is placing it themselves.
@@ -363,8 +468,8 @@ canvas.on('text:changed', (e) => {
   textChangeTimer = setTimeout(() => { pushHistory(); renderLayers(); renderProps(); }, 400);
 });
 canvas.on('selection:created', () => { renderProps(); renderLayers(); });
-canvas.on('selection:updated', () => { renderProps(); renderLayers(); });
-canvas.on('selection:cleared', () => { renderProps(); renderLayers(); });
+canvas.on('selection:updated', () => { for (const o of canvas.getObjects()) if (o.moveUnlocked && o !== canvas.getActiveObject()) { o.moveUnlocked = false; applyLock(o); } renderProps(); renderLayers(); });
+canvas.on('selection:cleared', () => { relockAll(); renderProps(); renderLayers(); });
 
 /* ---------------- Text objects ---------------- */
 
@@ -770,6 +875,8 @@ function harmoniseBlocks(items) {
  */
 function mergeParagraphs(objs, blocks) {
   const out = new Set(objs);
+  const med = (vals) => [...vals].sort((a, b) => a - b)[vals.length >> 1];
+  const spread = (vals) => Math.max(...vals) - Math.min(...vals);
   for (const block of blocks) {
     if (block.length < 2) continue;
     const rows = [...block].sort((a, b) => a.fitBox.y0 - b.fitBox.y0);
@@ -779,22 +886,55 @@ function mergeParagraphs(objs, blocks) {
     // Stacked: each line starts below the previous one's middle.
     const stacked = rows.every((o, i) => i === 0 || o.fitBox.y0 >= (rows[i - 1].fitBox.y0 + rows[i - 1].fitBox.y1) / 2);
     if (!same || !stacked) continue;
+    // A wider gap than the usual line spacing starts a new paragraph (a blank line between them).
+    const base = rows.map((o) => o.top + BASELINE * o.fontSize); // each fitted line's baseline
+    const steps = rows.slice(1).map((o, i) => base[i + 1] - base[i]);
+    const usual = med(steps);
+    let run = [rows[0]];
+    for (let i = 1; i < rows.length; i++) {
+      if (rows.length > 2 && steps[i - 1] > 1.35 * usual) { mergeRun(run, out); run = []; }
+      run.push(rows[i]);
+    }
+    mergeRun(run, out);
+  }
+  return [...out];
+
+  function mergeRun(rows, out) {
+    if (rows.length < 2) return;
+    const f = rows[0];
     const fs = f.fontSize;
-    const base = rows.map((o) => o.top + BASELINE * fs); // each fitted line's baseline
-    const steps = rows.slice(1).map((o, i) => base[i + 1] - base[i]).sort((a, b) => a - b);
-    const lineHeight = Math.min(3, Math.max(0.5, steps[steps.length >> 1] / (1.13 * fs)));
-    const med = (vals) => [...vals].sort((a, b) => a - b)[vals.length >> 1];
-    const spread = (vals) => Math.max(...vals) - Math.min(...vals);
-    const lefts = rows.map((o) => o.left); const rights = rows.map((o) => o.left + o.width); const mids = rows.map((o) => o.left + o.width / 2);
-    const align = spread(lefts) <= Math.min(spread(mids), spread(rights)) + 0.3 * fs ? 'left'
+    const charSpacing = med(rows.map((o) => o.charSpacing || 0));
+    // A first line that starts further in than the rest: a whole number of
+    // characters in (a two-character indent, or the rest of a line led by a
+    // heading in another colour) becomes that many full-width spaces;
+    // anything else keeps the first line in its own box, where it was.
+    // Only when the lines after it are clearly left-aligned (two or more
+    // starting together): two centred lines also start at different places.
+    let indent = '';
+    const rest = rows.slice(1);
+    const restLefts = rest.map((o) => o.left);
+    const inset = f.left - med(restLefts);
+    const leftAligned = rest.length >= 2 && spread(restLefts) <= 0.3 * fs && spread(restLefts) < spread(rest.map((o) => o.left + o.width / 2));
+    if (inset > 0.5 * fs && leftAligned) {
+      const em = fs * (1 + charSpacing / 1000);
+      const k = Math.round(inset / em);
+      if (k > 12 || Math.abs(inset - k * em) > 0.35 * em) { mergeRun(rest, out); return; }
+      indent = '\u3000'.repeat(k);
+    }
+    const base = rows.map((o) => o.top + BASELINE * fs);
+    const steps = rows.slice(1).map((o, i) => base[i + 1] - base[i]);
+    const lineHeight = Math.min(3, Math.max(0.5, med(steps) / (1.13 * fs)));
+    const placed = indent ? rest : rows; // an indented first line says nothing about the alignment
+    const lefts = placed.map((o) => o.left); const rights = placed.map((o) => o.left + o.width); const mids = placed.map((o) => o.left + o.width / 2);
+    const align = indent ? 'left' : spread(lefts) <= Math.min(spread(mids), spread(rights)) + 0.3 * fs ? 'left'
       : spread(mids) <= spread(rights) ? 'center' : 'right';
     const union = (key) => ({
       x0: Math.min(...rows.map((o) => o[key].x0)), y0: Math.min(...rows.map((o) => o[key].y0)),
       x1: Math.max(...rows.map((o) => o[key].x1)), y1: Math.max(...rows.map((o) => o[key].y1)),
     });
-    const para = newText(rows.map((o) => o.text).join('\n'), {
+    const para = newText(indent + rows.map((o) => o.text).join('\n'), {
       fontFamily: f.fontFamily, fontWeight: f.fontWeight, fill: f.fill, fontSize: fs, ocr: true,
-      lineHeight, textAlign: align, charSpacing: med(rows.map((o) => o.charSpacing || 0)),
+      lineHeight, textAlign: align, charSpacing,
     });
     para.initDimensions();
     const left = align === 'left' ? med(lefts) : align === 'center' ? med(mids) - para.width / 2 : med(rights) - para.width;
@@ -804,7 +944,6 @@ function mergeParagraphs(objs, blocks) {
     for (const o of rows) out.delete(o);
     out.add(para);
   }
-  return [...out];
 }
 
 /** After the text of a detected line changes, re-fit it to the original area (unless the user sized it). */
@@ -857,6 +996,69 @@ function splitStackedLines(lines) {
       B.bbox = { ...b, y0: Math.min(b.y1 - 2, best + 1) };
     }
   }
+}
+
+/**
+ * A heading in another colour that the reader joined to the line beside it
+ * (a red 《大悲觀音伏藏法》 leading a white paragraph line) is split off at the
+ * character where the ink colour changes, so each part is painted out and
+ * redrawn in its own colour. Without this the red heading stayed in the photo
+ * and a white copy of it was drawn next to it.
+ */
+function splitColourRuns(lines) {
+  const out = [];
+  const g = state.original.getContext('2d', { willReadFrequently: true });
+  const width = (ch) => (/\s/.test(ch) ? 0.3 : /[\u2E80-\uFFEF]/.test(ch) ? 1 : 0.55);
+  for (const l of lines) {
+    const chars = [...l.text];
+    if (l.vertical || l.badge || chars.length < 4) { out.push(l); continue; }
+    const x0 = Math.floor(l.bbox.x0); const y0 = Math.floor(l.bbox.y0);
+    const w = Math.ceil(l.bbox.x1) - x0; const h = Math.ceil(l.bbox.y1) - y0;
+    if (w < 8 || h < 4) { out.push(l); continue; }
+    const bg = sampleRing(state.original, l.bbox, 2);
+    const { data } = g.getImageData(x0, y0, w, h);
+    // Ink colour totals per column: pixels clearly away from the ground.
+    const sum = new Float64Array(w * 4);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        if (Math.abs(data[i] - bg[0]) + Math.abs(data[i + 1] - bg[1]) + Math.abs(data[i + 2] - bg[2]) < 120) continue;
+        sum[x * 4] += data[i]; sum[x * 4 + 1] += data[i + 1]; sum[x * 4 + 2] += data[i + 2]; sum[x * 4 + 3]++;
+      }
+    }
+    const mean = (a, b) => {
+      let r = 0; let gg = 0; let bb = 0; let n = 0;
+      for (let x = a; x < b; x++) { r += sum[x * 4]; gg += sum[x * 4 + 1]; bb += sum[x * 4 + 2]; n += sum[x * 4 + 3]; }
+      return n ? [r / n, gg / n, bb / n, n] : null;
+    };
+    const dist = (a, b) => Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]);
+    // How evenly one colour runs through a stretch: ink-weighted mean distance of its columns' colours.
+    const spread = (a, b, m) => {
+      let d = 0; let n = 0;
+      for (let x = a; x < b; x++) { const c = sum[x * 4 + 3]; if (c) { d += dist([sum[x * 4] / c, sum[x * 4 + 1] / c, sum[x * 4 + 2] / c], m) * c; n += c; } }
+      return n ? d / n : 0;
+    };
+    const total = chars.reduce((n, ch) => n + width(ch), 0);
+    let best = null; let acc = 0;
+    for (let k = 1; k < chars.length; k++) {
+      acc += width(chars[k - 1]);
+      if (k < 2 || chars.length - k < 2) continue;
+      // Only where a heading can end: after a closing bracket or colon, or
+      // before an opening bracket. Never inside a word or number (a gradient
+      // "2025" is one piece of text).
+      if (!/[》」』）】〉〕)\]：:｜|]/.test(chars[k - 1]) && !/[《「『（【〈〔(\[]/.test(chars[k])) continue;
+      const xs = Math.round((acc / total) * w);
+      const L = mean(0, xs); const R = mean(xs, w);
+      if (!L || !R || L[3] < 20 || R[3] < 20) continue;
+      const d = dist(L, R);
+      if (!best || d > best.d) best = { k, xs, d, L, R };
+    }
+    if (!best || best.d < 150 || Math.max(spread(0, best.xs, best.L), spread(best.xs, w, best.R)) > best.d / 3) { out.push(l); continue; }
+    const cut = x0 + best.xs;
+    const part = (a, b, box) => ({ ...l, text: chars.slice(a, b).join('').trim(), bbox: box, charConf: l.charConf?.slice(a, b) });
+    out.push(part(0, best.k, { ...l.bbox, x1: cut }), part(best.k, chars.length, { ...l.bbox, x0: cut }));
+  }
+  return out.filter((l) => l.text);
 }
 
 /**
@@ -948,6 +1150,17 @@ function looksLikePictureText(ib) {
   return patch.bounded && patch.ratio < 3 && Math.max(offset, patch.offset) >= 200;
 }
 
+/**
+ * A short reading with no Chinese in it, among busy artwork: usually carvings,
+ * ornaments or foliage that the reader took for letters or digits. A real
+ * number or word on a poster sits on plain or smoothly shaded ground.
+ */
+function looksLikePattern(line, lines) {
+  const chars = [...line.text.replace(/\s/g, '')];
+  if (chars.length > 6 || chars.some((ch) => /\p{Script=Han}/u.test(ch))) return false;
+  return busyAround(state.original, line.bbox, lines.filter((o) => o !== line).map((o) => o.bbox)) > 0.1;
+}
+
 // Enclosed numbers and characters (④, ㊁): printed on a disc or in a ring.
 const ENCLOSED = /[\u2460-\u24FF\u2776-\u2793\u3251-\u325F\u3280-\u32BF]/u;
 
@@ -986,7 +1199,7 @@ function pickImage(use) {
  * inside it and centred. The image is stored at most twice the box's size:
  * sharp in 2× exports, light in saved templates and undo history. With
  * `replacing`, it swaps that image box; otherwise the old picture under the
- * region is painted out (↶ Erase brings it back).
+ * region is painted out (Undo brings it back).
  */
 async function placeImage(region, file, replacing = null) {
   const src = await fileToCanvas(file);
@@ -1006,23 +1219,18 @@ async function placeImage(region, file, replacing = null) {
     left: region.x0 + (rw - img.width * k) / 2, top: region.y0 + (rh - img.height * k) / 2,
     slot: { x0: region.x0, y0: region.y0, x1: region.x1, y1: region.y1 },
   });
-  if (replacing) {
-    canvas.remove(replacing);
-  } else {
-    const x = Math.max(0, Math.floor(region.x0)); const y = Math.max(0, Math.floor(region.y0));
-    const w = Math.min(state.clean.width - x, Math.ceil(rw)); const h = Math.min(state.clean.height - y, Math.ceil(rh));
-    state.eraseUndo.push({ x, y, data: state.clean.getContext('2d').getImageData(x, y, w, h) });
-    if (state.eraseUndo.length > 30) state.eraseUndo.shift();
-    eraseBox(state.clean, region, 0);
-    state.bgDirty = true;
-    setBackground(state.clean);
-  }
+  // One step for Undo: the old picture painted out and the new image box added.
+  history.paused = true;
+  let patch = null;
+  if (replacing) canvas.remove(replacing);
+  else patch = patchBackground(region, () => eraseBox(state.clean, region, 0));
   canvas.add(img);
+  history.paused = false;
+  pushHistory(patch);
   canvas.setActiveObject(img);
   canvas.requestRenderAll();
-  pushHistory();
   refreshEnabled();
-  return img;
+  return { img, patch };
 }
 
 /** Run an export with backgroundWithImages(), freeing the copy afterwards. */
@@ -1134,7 +1342,7 @@ function askKeepOrConvert(items) {
       if (i === 0) return;
       i--;
       const a = answers.pop();
-      if (a && typeof a === 'object') { canvas.remove(a); undoErase(); }
+      if (a && typeof a === 'object') { canvas.remove(a.img); if (a.patch) applyPatch(a.patch, 'before'); }
       show();
     };
     $('#askRest').onclick = finish;
@@ -1171,12 +1379,15 @@ async function runDetect() {
     history.paused = true;
     canvas.discardActiveObject();
     removeObjects(existing);
+    lines = splitColourRuns(lines);
 
     // Doubtful pieces are asked about one by one after the rest is converted:
     // - logos and organisation names (a logo row, or read below 50%
     //   confidence: mostly logos and tiny print) — usually best kept;
     // - text on a coloured panel or shape (追根溯源 on its blue box, ④ and ㊁ on discs);
-    // - signs, banners and labels inside the artwork.
+    // - signs, banners and labels inside the artwork, and patterns in it read
+    //   as letters (a temple roof's carvings as "15100");
+    // - faint, see-through text (a watermark): it can't be painted out cleanly.
     const logos = logoLines(lines);
     for (const l of lines) {
       l.panel = l.badge ? null : panelUnder(state.original, l.bbox);
@@ -1185,7 +1396,8 @@ async function runDetect() {
       const kind = logos.has(l) ? 'logo'
         : onShape ? 'panel'
           : l.confidence < 50 ? 'unsure'
-            : looksLikePictureText(inkBounds(state.original, l.bbox, { vertical: l.vertical })) ? 'picture' : null;
+            : inkContrast(state.original, l.bbox) < 100 ? 'faint'
+              : looksLikePattern(l, lines) || looksLikePictureText(inkBounds(state.original, l.bbox, { vertical: l.vertical })) ? 'picture' : null;
       if (kind) asks.push({ lines: [l], kind });
     }
     lines = lines.filter((l) => !asks.some((a) => a.lines.includes(l)));
@@ -1203,6 +1415,8 @@ async function runDetect() {
     }
     for (const qr of findQRCodes(state.original)) {
       const inQR = (l) => { const cx = (l.bbox.x0 + l.bbox.x1) / 2; const cy = (l.bbox.y0 + l.bbox.y1) / 2; return cx > qr.x0 && cx < qr.x1 && cy > qr.y0 && cy < qr.y1; };
+      // Confidently read text inside means it isn't a QR code after all: keep everything.
+      if (lines.filter((l) => inQR(l) && l.confidence >= 80 && [...l.text].length >= 3).length >= 2) continue;
       lines = lines.filter((l) => !inQR(l));
       asks = asks.filter((a) => !a.lines.length || !a.lines.every(inQR));
       if (!replaced(qr)) asks.push({ kind: 'qr', region: qr, lines: [] });
@@ -1211,8 +1425,7 @@ async function runDetect() {
     asks.sort((a, b) => top(a) - top(b) || (b.region ? 1 : 0) - (a.region ? 1 : 0));
 
     const freeOld = replacePhoto(state.original, cloneCanvas(state.original));
-    state.eraseUndo = [];
-    const objs = await convertLines(lines);
+      const objs = await convertLines(lines);
     separateLines(objs);
     state.bgDirty = true;
     setBackground(state.clean);
@@ -1343,6 +1556,9 @@ function renderQuickEdit() {
   if (!o || o.isEditing || transforming || comparing || state.tool !== 'select') { box.hidden = true; return; }
   const isImage = o.type === 'image';
   box.classList.toggle('is-image', isImage);
+  $('#qeMove').hidden = !TOUCH;
+  $('#qeMove').classList.toggle('active', Boolean(o.moveUnlocked));
+  $('#qeMove').querySelector('span').textContent = t(o.moveUnlocked ? 'moveDone' : 'moveBox');
   if (isImage) { box.hidden = false; positionQuickEdit(); return; }
   const ta = $('#qeText');
   if (document.activeElement !== ta) ta.value = o.vertical ? fromVertical(o.text) : o.text;
@@ -1409,6 +1625,14 @@ $('#qeBold').addEventListener('click', () => {
 $('#qeVertical').addEventListener('click', () => { const o = active(); if (o) setVertical(!o.vertical); });
 $('#qeDelete').addEventListener('click', () => { const o = active() || activeImage(); if (o) canvas.remove(o); });
 $('#qeKeep').addEventListener('click', () => keepAsPicture(active()));
+$('#qeMove').addEventListener('click', () => {
+  const o = active() || activeImage();
+  if (!o) return;
+  o.moveUnlocked = !o.moveUnlocked;
+  applyLock(o);
+  canvas.requestRenderAll();
+  renderQuickEdit();
+});
 $('#qeReplace').addEventListener('click', () => {
   const o = activeImage();
   if (!o) return;
@@ -1419,19 +1643,12 @@ $('#qeReplace').addEventListener('click', () => {
 /** Undo the conversion of one line: remove its text box and put the photo's original pixels back. */
 function keepAsPicture(o) {
   if (!o || !o.eraseBox || !state.original) return;
-  const b = o.eraseBox;
-  const pad = 6;
-  const x = Math.max(0, Math.floor(b.x0 - pad)); const y = Math.max(0, Math.floor(b.y0 - pad));
-  const w = Math.min(state.clean.width - x, Math.ceil(b.x1 - b.x0 + 2 * pad));
-  const h = Math.min(state.clean.height - y, Math.ceil(b.y1 - b.y0 + 2 * pad));
-  // Same undo stack as the Erase area tool, so ↶ Erase puts the cleaned patch back.
-  state.eraseUndo.push({ x, y, data: state.clean.getContext('2d').getImageData(x, y, w, h) });
-  if (state.eraseUndo.length > 30) state.eraseUndo.shift();
-  state.clean.getContext('2d').drawImage(state.original, x, y, w, h, x, y, w, h);
-  state.bgDirty = true;
-  markDirty();
-  setBackground(state.clean);
+  // One step for Undo: the box goes and the original pixels come back.
+  history.paused = true;
+  const patch = patchBackground(o.eraseBox, (g, r) => g.drawImage(state.original, r.x, r.y, r.w, r.h, r.x, r.y, r.w, r.h), 6);
   canvas.remove(o);
+  history.paused = false;
+  pushHistory(patch);
   refreshEnabled();
 }
 document.querySelectorAll('[name=align]').forEach((r) => r.addEventListener('change', () => updateActive({ textAlign: r.value }, { remeasure: false })));
@@ -1513,7 +1730,7 @@ function setTool(tool) {
   $('#eraseBtn').classList.toggle('active', tool === 'erase');
   $('#stage').classList.toggle('erasing', tool === 'erase');
   const selecting = tool === 'select';
-  canvas.selection = selecting;
+  canvas.selection = selecting && !TOUCH; // no box-select on phones (it grabbed several lines at once)
   canvas.discardActiveObject();
   canvas.getObjects().forEach((o) => { o.selectable = selecting; o.evented = selecting; });
   canvas.defaultCursor = selecting ? 'default' : 'crosshair';
@@ -1550,29 +1767,29 @@ canvas.on('mouse:up', () => {
   history.paused = false;
   drag = null;
   if (width < 3 || height < 3) return;
-  const box = { x0: left, y0: top, x1: left + width, y1: top + height };
-  const x = Math.max(0, Math.floor(left) - 8);
-  const y = Math.max(0, Math.floor(top) - 8);
-  const w = Math.min(state.clean.width - x, Math.ceil(width) + 16);
-  const h = Math.min(state.clean.height - y, Math.ceil(height) + 16);
-  state.eraseUndo.push({ x, y, data: state.clean.getContext('2d').getImageData(x, y, w, h) });
-  if (state.eraseUndo.length > 30) state.eraseUndo.shift();
-  eraseText(state.clean, box, 0);
-  state.bgDirty = true;
-  markDirty();
-  setBackground(state.clean);
-  refreshEnabled();
+  wipeArea({ x0: left, y0: top, x1: left + width, y1: top + height });
 });
 
-function undoErase() {
-  const step = state.eraseUndo.pop();
-  if (!step) return;
-  state.clean.getContext('2d').putImageData(step.data, step.x, step.y);
-  state.bgDirty = true;
-  markDirty();
-  setBackground(state.clean);
+/**
+ * Wipe an area: every text or image box mostly inside it is removed, and the
+ * photo there is painted with the colours around it. One step for Undo.
+ */
+function wipeArea(box) {
+  const inside = (o) => {
+    const r = o.getBoundingRect();
+    const ix = Math.min(r.left + r.width, box.x1) - Math.max(r.left, box.x0);
+    const iy = Math.min(r.top + r.height, box.y1) - Math.max(r.top, box.y0);
+    return ix > 0 && iy > 0 && ix * iy >= 0.6 * r.width * r.height;
+  };
+  history.paused = true;
+  const gone = canvas.getObjects().filter((o) => !o.temp && inside(o));
+  if (gone.length) canvas.remove(...gone);
+  const patch = patchBackground(box, () => eraseBox(state.clean, box, 0));
+  history.paused = false;
+  pushHistory(patch);
   refreshEnabled();
 }
+
 
 /* ---------------- New / open / save ---------------- */
 
@@ -1667,7 +1884,7 @@ async function closeDoc() {
   resetCanvas(800, 600);
   canvas.backgroundImage = null;
   replacePhoto(null, null)();
-  Object.assign(state, { id: null, name: '', bgDirty: false, origDirty: false, dirty: false, home: null, eraseUndo: [], originalFile: null, cleanFile: null });
+  Object.assign(state, { id: null, name: '', bgDirty: false, origDirty: false, dirty: false, home: null, originalFile: null, cleanFile: null });
   $('#docName').value = '';
   resetHistory();
   updateTitle();
@@ -2008,10 +2225,10 @@ function init() {
   $('#addTextBtn').addEventListener('click', addText);
   $('#eraseBtn').addEventListener('click', () => {
     setTool(state.tool === 'erase' ? 'select' : 'erase');
+    if (state.tool === 'erase') toast(t('eraseHint'), 'info', 5000);
     // On phones the panel is under the photo: bring the photo up to drag on.
     if (state.tool === 'erase' && matchMedia('(max-width: 760px)').matches) $('#stage').scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
-  $('#undoEraseBtn').addEventListener('click', undoErase);
   $('#undoBtn').addEventListener('click', undo);
   $('#redoBtn').addEventListener('click', redo);
   $('#saveBtn').addEventListener('click', save);

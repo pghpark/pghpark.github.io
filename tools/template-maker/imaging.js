@@ -391,6 +391,56 @@ export function plainPatch(canvas, ink) {
 }
 
 /**
+ * How busy the photo is just around a line: the share of neighbouring pixel
+ * pairs with a clear brightness step, in a band 0.25 to 0.8 line-heights
+ * outside the box (other text boxes in `others` left out). Printed text sits on
+ * plain or smoothly shaded ground (about 0 to 0.07); carvings, foliage and
+ * ornaments that the reader mistakes for letters sit in clutter (over 0.1).
+ */
+export function busyAround(canvas, box, others = []) {
+  const h = Math.min(box.x1 - box.x0, box.y1 - box.y0);
+  const in0 = Math.max(2, 0.25 * h); const out = Math.max(5, 0.8 * h);
+  const r = clampRect(canvas, box.x0 - out, box.y0 - out, box.x1 + out, box.y1 + out);
+  const w = r.x1 - r.x0; const hh = r.y1 - r.y0;
+  if (w < 3 || hh < 3) return 0;
+  const { data } = canvas.getContext('2d', { willReadFrequently: true }).getImageData(r.x0, r.y0, w, hh);
+  const lum = (k) => 0.3 * data[k] + 0.59 * data[k + 1] + 0.11 * data[k + 2];
+  let steps = 0; let pairs = 0;
+  for (let y = 0; y < hh; y++) {
+    const ay = r.y0 + y;
+    for (let x = 0; x < w - 1; x++) {
+      const ax = r.x0 + x;
+      if (ax > box.x0 - in0 && ax < box.x1 + in0 && ay > box.y0 - in0 && ay < box.y1 + in0) continue;
+      if (others.some((q) => ax >= q.x0 && ax < q.x1 && ay >= q.y0 && ay < q.y1)) continue;
+      const k = (y * w + x) * 4;
+      pairs++;
+      if (Math.abs(lum(k + 4) - lum(k)) > 18) steps++;
+    }
+  }
+  return steps / Math.max(1, pairs);
+}
+
+/**
+ * How strongly the letters stand out inside a box: the colour distance (sum of
+ * R, G and B differences) from the box's median colour that the most distinct
+ * 3% of its pixels reach. Printed text reaches 160 or more (red on brown
+ * included); a see-through watermark stays under 100.
+ */
+export function inkContrast(canvas, box) {
+  const r = clampRect(canvas, box.x0, box.y0, box.x1, box.y1);
+  const w = r.x1 - r.x0; const h = r.y1 - r.y0;
+  if (w < 1 || h < 1) return 765;
+  const { data } = canvas.getContext('2d', { willReadFrequently: true }).getImageData(r.x0, r.y0, w, h);
+  const n = w * h; const R = new Uint8Array(n); const G = new Uint8Array(n); const B = new Uint8Array(n);
+  for (let i = 0, k = 0; i < n; i++, k += 4) { R[i] = data[k]; G[i] = data[k + 1]; B[i] = data[k + 2]; }
+  const mid = [median(R), median(G), median(B)];
+  const D = new Float32Array(n);
+  for (let i = 0; i < n; i++) D[i] = Math.abs(R[i] - mid[0]) + Math.abs(G[i] - mid[1]) + Math.abs(B[i] - mid[2]);
+  D.sort();
+  return D[Math.floor(n * 0.97)];
+}
+
+/**
  * Text printed on a coloured panel (a filled box, badge or band): most of the
  * reading box is one colour that differs clearly from just outside the box,
  * and the letters are another colour standing out from that panel. Plain text
@@ -507,9 +557,21 @@ export function findQRCodes(canvas) {
         const A = finders[i]; const B = finders[j]; const C = finders[k];
         const ms = [A.m, B.m, C.m]; if (Math.max(...ms) / Math.min(...ms) > 1.6) continue;
         const ab = Math.hypot(B.x - A.x, B.y - A.y); const ac = Math.hypot(C.x - A.x, C.y - A.y); const bc = Math.hypot(C.x - B.x, C.y - B.y);
-        // A is the corner: AB ≈ AC, BC ≈ AB·√2, and the code is at least 21 modules.
-        if (Math.abs(ab - ac) > 0.2 * ab || Math.abs(bc - ab * Math.SQRT2) > 0.2 * bc || ab < 12 * A.m) continue;
+        // A is the corner: AB ≈ AC, BC ≈ AB·√2, and the code is 21 to about
+        // 77 modules (version 1 to 15; corner centres are 14 to 70 modules
+        // apart). Dense lettering (回, 口) can look like corner squares, but
+        // seldom at a QR code's proportions.
+        const mods = ab / ((A.m + B.m + C.m) / 3);
+        if (Math.abs(ab - ac) > 0.2 * ab || Math.abs(bc - ab * Math.SQRT2) > 0.2 * bc || mods < 12 || mods > 72) continue;
         const D = { x: B.x + C.x - A.x, y: B.y + C.y - A.y };
+        // Inside, a QR code is about half dark modules; lines of text are much sparser.
+        {
+          const qx0 = Math.round(Math.min(A.x, B.x, C.x, D.x)); const qx1 = Math.round(Math.max(A.x, B.x, C.x, D.x));
+          const qy0 = Math.round(Math.min(A.y, B.y, C.y, D.y)); const qy1 = Math.round(Math.max(A.y, B.y, C.y, D.y));
+          let darkN = 0; let n = 0;
+          for (let y = Math.max(0, qy0); y < Math.min(H, qy1); y += 2) for (let x = Math.max(0, qx0); x < Math.min(W, qx1); x += 2) { n++; if (dark(x, y)) darkN++; }
+          if (!n || darkN / n < 0.3 || darkN / n > 0.75) continue;
+        }
         const xs = [A.x, B.x, C.x, D.x]; const ys = [A.y, B.y, C.y, D.y];
         const pad = 4.5 * A.m; // half a finder (3.5 modules) plus a module of margin
         codes.push({
@@ -690,7 +752,26 @@ export function textColorByContrast(canvas, box, vertical = false) {
   // Prefer a stroke colour that stops at the ends; then any colour that stops;
   // then (an end lies on artwork of the text's colour, or off the photo) the
   // most distinct stroke colour.
-  const pick = (best(strokes(stops)) || best(stops) || best(strokes(cands)))?.c;
+  let chosen = best(strokes(stops)) || best(stops) || best(strokes(cands));
+  // On a gradient panel (gold, light in the middle and darker at the ends) the
+  // panel's own highlight stands out most from the ends. A shade of the
+  // surroundings' own hue loses to a stroke colour of a clearly different hue
+  // that is more stroke-like (red calligraphy on gold).
+  const hsv = (c) => {
+    const mx = Math.max(...c); const mn = Math.min(...c); const d = mx - mn;
+    const hue = !d ? 0 : mx === c[0] ? ((c[1] - c[2]) / d + 6) % 6 : mx === c[1] ? (c[2] - c[0]) / d + 2 : (c[0] - c[1]) / d + 4;
+    return { h: hue * 60, s: mx ? d / mx : 0, v: mx / 255 };
+  };
+  const hueGap = (a, b) => { const d = Math.abs(hsv(a).h - hsv(b).h) % 360; return Math.min(d, 360 - d); };
+  const shade = (c) => hsv(around).s > 0.25 && hsv(c).s > 0.12 && hueGap(c, around) < 10;
+  const distinct = (c) => (hsv(c).s > 0.12 && hueGap(c, around) > 15) || hsv(c).v < 0.25;
+  if (chosen && shade(chosen.c)) {
+    const e = edgeShare(chosen.c);
+    const alt = best(strokes(cands).filter((x) => x !== chosen && distinct(x.c)
+      && (edgeShare(x.c) >= e + 0.15 || 1 - edgeShare(x.c) <= 0.5 * (1 - e)))); // thin lines: nearly every pixel is an edge
+    if (alt) chosen = alt;
+  }
+  const pick = chosen?.c;
   if (!pick) return estimateTextColor(canvas, box);
   // Refine: the stroke cores, i.e. the members of that cluster least like the
   // surroundings (edge pixels are blends).

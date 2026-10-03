@@ -729,10 +729,14 @@ function mergePieces(lines) {
  * changes). Characters the original already had are kept, e.g. 台 stays 台
  * (OpenCC's Taiwan table would make it 臺).
  */
+// Characters that are also standard Traditional characters in their own right
+// (涂 is a surname, not only Simplified for 塗): never converted.
+const KEEP_AS_READ = new Set([...'台涂余干后里范松谷只冲准系制卷征云丑斗了凶朴']);
+
 function toTaiwan(text, cn2tw) {
   const out = cn2tw(text);
   const a = [...text];
   const b = [...out];
   if (a.length !== b.length) return out;
-  return b.map((c, i) => (a[i] === '台' ? '台' : c)).join('');
+  return b.map((c, i) => (KEEP_AS_READ.has(a[i]) ? a[i] : c)).join('');
 }
