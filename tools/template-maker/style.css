@@ -351,6 +351,10 @@ dialog form, dialog > p { padding: 12px 16px; margin: 0; }
 .template-open span { display: flex; flex-direction: column; min-width: 0; }
 .template-open strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .template-open small { color: var(--muted); }
+.template-del { display: grid; place-items: center; flex-shrink: 0; width: 44px; height: 44px; padding: 0; border-radius: 50%; border: 1px solid var(--line); background: var(--bg); color: var(--danger); cursor: pointer; touch-action: manipulation; }
+.template-del svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.template-del:hover { border-color: var(--danger); }
+.template-del:active { transform: scale(0.92); }
 
 .toast {
   cursor: pointer; /* tap to close */

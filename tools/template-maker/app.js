@@ -1776,10 +1776,12 @@ async function fillOpenList(store) {
         $('#openDialog').close();
         await withBusy(t('opening'), async () => openRecord(await store.get(tpl.id), storeKey(store)));
       });
+      // Delete: a big round bin button (asks first).
       const del = document.createElement('button');
-      del.className = 'icon danger';
-      del.textContent = '✕';
+      del.className = 'template-del';
+      del.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>';
       del.title = t('delete');
+      del.setAttribute('aria-label', `${t('delete')}: ${tpl.name}`);
       del.addEventListener('click', async () => {
         if (!confirm(t('confirmDelete', { name: tpl.name }))) return;
         await withBusy(t('deleting'), () => store.remove(tpl.id));
