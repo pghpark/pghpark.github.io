@@ -632,6 +632,67 @@ export function logoMark(canvas, group, textBoxes) {
 }
 
 /**
+ * An icon just before a line of text (a © or globe before a web address, a
+ * phone before a number, a pin before an address): connected shapes that
+ * stand out from the page, within 0.8 line-heights left of the line, each
+ * 0.25 to 1.8 line-heights in size, together no bigger than about two
+ * line-heights, outside every text box; shapes cut by the search window
+ * belong to something else and are left out. Returns the icon's box or null.
+ */
+export function iconBefore(canvas, line, textBoxes) {
+  const H = Math.max(8, line.y1 - line.y0);
+  const win = clampRect(canvas, line.x0 - 2.2 * H, line.y0 - 0.5 * H, line.x0, line.y1 + 0.5 * H);
+  const w = win.x1 - win.x0; const h = win.y1 - win.y0;
+  if (w < 6 || h < 6) return null;
+  const { data } = canvas.getContext('2d', { willReadFrequently: true }).getImageData(win.x0, win.y0, w, h);
+  const page = sampleRing(canvas, line, 0.5 * H);
+  const inText = (x, y) => textBoxes.some((b) => x >= b.x0 - 1 && x <= b.x1 + 1 && y >= b.y0 - 1 && y <= b.y1 + 1);
+  const ink = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      if (Math.abs(data[i] - page[0]) + Math.abs(data[i + 1] - page[1]) + Math.abs(data[i + 2] - page[2]) > 80 && !inText(win.x0 + x, win.y0 + y)) ink[y * w + x] = 1;
+    }
+  }
+  const seen = new Uint8Array(w * h);
+  let box = null; const parts = [];
+  for (let s0 = 0; s0 < w * h; s0++) {
+    if (!ink[s0] || seen[s0]) continue;
+    const stack = [s0]; seen[s0] = 1; let n = 0; let x0 = w; let y0 = h; let x1 = 0; let y1 = 0;
+    while (stack.length) {
+      const k = stack.pop(); n++;
+      const x = k % w; const y = (k - x) / w;
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      for (const nk of [k - 1, k + 1, k - w, k + w]) {
+        if (nk < 0 || nk >= w * h || seen[nk] || !ink[nk] || (Math.abs((nk % w) - x) > 1)) continue;
+        seen[nk] = 1; stack.push(nk);
+      }
+    }
+    const bw = x1 - x0 + 1; const bh = y1 - y0 + 1;
+    if (n < 0.03 * H * H || bw > 1.8 * H || bh > 1.8 * H) continue;
+    if (x0 === 0 || y0 === 0 || y1 === h - 1) continue; // cut by the window: part of something else (artwork, a neighbour's icon)
+    if (w - 1 - x1 > 0.8 * H) continue; // too far from the text
+    if (bw < 0.25 * H && bh < 0.25 * H) continue; // a speck or a dot
+    const b = { x0: win.x0 + x0, y0: win.y0 + y0, x1: win.x0 + x1 + 1, y1: win.y0 + y1 + 1 };
+    parts.push({ n, fill: n / (bw * bh) });
+    box = box ? { x0: Math.min(box.x0, b.x0), y0: Math.min(box.y0, b.y0), x1: Math.max(box.x1, b.x1), y1: Math.max(box.y1, b.y1) } : b;
+  }
+  if (!box) return null;
+  const bw = box.x1 - box.x0; const bh = box.y1 - box.y0;
+  const total = parts.reduce((a, q) => a + q.n, 0); const main = parts.reduce((a, q) => (q.n > a.n ? q : a));
+  // What an icon looks like beside text: mostly one shape, level with the
+  // line, about as tall as its letters, roughly square, and close to it.
+  // (Measured on posters: icons are 0.66-0.93 of the line height, square
+  // within 0.85-1.14, level within 0.03; confetti, artwork strokes and panel
+  // edges each break at least one of these.)
+  const dy = Math.abs((box.y0 + box.y1) / 2 - (line.y0 + line.y1) / 2) / H;
+  const aspect = bw / bh;
+  if (main.n < 0.8 * total || dy > 0.15 || bh < 0.6 * H || bh > 1.2 * H || aspect < 0.6 || aspect > 1.6) return null;
+  if (line.x0 - box.x1 > 0.5 * H) return null;
+  return box;
+}
+
+/**
  * Black-and-white mask of the letter strokes inside `box`, scaled to `height`
  * px tall (width keeps the aspect ratio). Used to compare fonts with the original.
  */

@@ -2,7 +2,7 @@ import { paddleDetect as detectText } from './paddle.js';
 import { t, applyI18n, setLang, getLang, LANGS } from './i18n.js';
 import {
   fileToCanvas, urlToCanvas, cloneCanvas, eraseText, canvasToBlob, inkBounds, letterMask, sampleRing, textColorByContrast, plainPatch, busyAround, inkContrast,
-  panelUnder, findQRCodes, logoMark, makeCanvas, eraseBox,
+  panelUnder, findQRCodes, logoMark, iconBefore, makeCanvas, eraseBox,
 } from './imaging.js';
 import {
   FONTS, DEFAULT_FAMILY, MATCH_FAMILIES, ensureFontsLoaded, normalizeWeight, weightsOf, isBold, loadFontCss,
@@ -1226,6 +1226,24 @@ function looksLikePattern(line, lines) {
     && busyAround(state.original, line.bbox, lines.filter((o) => o !== line).map((o) => o.bbox)) > 0.1;
 }
 
+// Marks that image and editing tools stamp on what they make (the name as
+// the reader sees it: "CapCutAi", "Made with Canva", 剪映, 豆包 AI 生成…).
+const WATERMARK_NAMES = /cap\s*cut|canva|midjourney|dall[\s·-]?e|firefly|stable\s*diffusion|leonardo|ideogram|gemini|copilot|jimeng|doubao|meitu|picsart|kling|runway|made\s*with|ai\s*generated|generated\s*by|剪映|即夢|即梦|豆包|美圖|美图|醒圖|醒图|可靈|可灵|通義|通义|文心一格|AI\s*生成|AI\s*製作|AI\s*制作/i;
+/**
+ * A watermark: a tool's name or tag anywhere, or faint, see-through text
+ * tucked into a corner of the picture (within 18% of the width and 12% of
+ * the height from a corner), where tools put their marks. Corner position
+ * alone isn't enough: organiser and venue labels sit in corners too.
+ */
+function isWatermark(line) {
+  const text = line.text.replace(/\s+/g, ' ').trim();
+  if (WATERMARK_NAMES.test(text)) return true;
+  const W = state.original.width; const H = state.original.height; const b = line.bbox;
+  const nearX = b.x1 < 0.18 * W || b.x0 > 0.82 * W;
+  const nearY = b.y1 < 0.12 * H || b.y0 > 0.88 * H;
+  return nearX && nearY && [...text].length <= 16 && inkContrast(state.original, b) < 100;
+}
+
 // Enclosed numbers and characters (④, ㊁): printed on a disc or in a ring.
 const ENCLOSED = /[\u2460-\u24FF\u2776-\u2793\u3251-\u325F\u3280-\u32BF]/u;
 
@@ -1355,7 +1373,8 @@ function groupLogoPieces(asks) {
 function askKeepOrConvert(items) {
   const dlg = $('#askDialog');
   const snip = $('#askSnip');
-  // Each answer, so ← Back can undo it: 'keep', 'convert', or the placed image box.
+  // Each answer, so ← Back can undo it: 'keep', 'convert', a placed image box
+  // ({ img, patch }) or a removal ({ patch }).
   const answers = [];
   let i = 0;
   return new Promise((resolve) => {
@@ -1376,6 +1395,10 @@ function askKeepOrConvert(items) {
       // A picture (QR code, emblem) is kept or swapped for a new image.
       $('#askKeep').textContent = t(region ? 'askKeepImage' : 'askKeep');
       $('#askConvert').textContent = t(region ? 'askImport' : 'askConvert');
+      // Logos, marks, watermarks and pictures can also go: removed and filled
+      // in from the background around them (an AI tool's mark in a corner, a
+      // symbol before a web address). Text on a box is converted or kept.
+      $('#askRemove').hidden = kind === 'panel';
       $('#askRest').hidden = i === items.length - 1;
       $('#askBack').hidden = i === 0;
       // The original around the text, with a little margin, at most 640 × 320.
@@ -1401,13 +1424,24 @@ function askKeepOrConvert(items) {
         if (img) answer(img);
       });
     };
+    $('#askRemove').onclick = () => {
+      const { lines, region } = items[i];
+      const b = region || unionBox(lines);
+      const pad = Math.max(3, 0.15 * Math.min(b.x1 - b.x0, b.y1 - b.y0)); // soft edges and glows too
+      const box = { x0: b.x0 - pad, y0: b.y0 - pad, x1: b.x1 + pad, y1: b.y1 + pad };
+      history.paused = true;
+      const patch = patchBackground(box, () => eraseBox(state.clean, box, 0));
+      history.paused = false;
+      pushHistory(patch);
+      answer({ patch });
+    };
     // Back to the previous question, undoing its answer (an imported image is
-    // removed and the original under it put back).
+    // removed and the original under it put back; a removal is put back).
     $('#askBack').onclick = () => {
       if (i === 0) return;
       i--;
       const a = answers.pop();
-      if (a && typeof a === 'object') { canvas.remove(a.img); if (a.patch) applyPatch(a.patch, 'before'); }
+      if (a && typeof a === 'object') { if (a.img) canvas.remove(a.img); if (a.patch) applyPatch(a.patch, 'before'); }
       show();
     };
     $('#askRest').onclick = finish;
@@ -1458,7 +1492,8 @@ async function runDetect() {
       l.panel = l.badge ? null : panelUnder(state.original, l.bbox);
       // On a shape: a weekday disc (㊁), an enclosed character (第④屆), a panel.
       const onShape = l.badge || ENCLOSED.test(l.text) || l.panel;
-      const kind = logos.has(l) ? 'logo'
+      const kind = isWatermark(l) ? 'watermark'
+        : logos.has(l) ? 'logo'
         : onShape ? 'panel'
           : l.confidence < 50 ? 'unsure'
             : !l.colourRun && inkContrast(state.original, l.bbox) < 100 ? 'faint' // a split-off heading stands out by definition
@@ -1486,6 +1521,25 @@ async function runDetect() {
       asks = asks.filter((a) => !a.lines.length || !a.lines.every(inQR));
       if (!replaced(qr)) asks.push({ kind: 'qr', region: qr, lines: [] });
     }
+    // Icons just before a line (© or globe before a web address, a phone
+    // before a number): kept, swapped or removed like an emblem.
+    const regions = () => asks.filter((a) => a.region).map((a) => a.region);
+    const overlaps = (r, b) => Math.min(r.x1, b.x1) > Math.max(r.x0, b.x0) && Math.min(r.y1, b.y1) > Math.max(r.y0, b.y0);
+    for (const l of [...lines, ...asks.flatMap((a) => a.lines)]) {
+      if (l.vertical || l.badge || [...l.text.trim()].length < 2) continue;
+      const icon = iconBefore(state.original, l.bbox, lettering);
+      if (icon && !replaced(icon) && !regions().some((r) => overlaps(r, icon))) asks.push({ kind: 'icon', region: icon, lines: [] });
+    }
+    // An icon asked about as a picture isn't also asked about as text: a
+    // doubtful reading of it ("0O" for a ©) is dropped. Only icons, which are
+    // small and tight: an emblem's box is coarse and can cover real lines.
+    const iconRegions = asks.filter((a) => a.kind === 'icon').map((a) => a.region);
+    const inRegion = (l) => l.confidence < 80 && iconRegions.some((r) => {
+      const b = l.bbox; const ix = Math.min(b.x1, r.x1) - Math.max(b.x0, r.x0); const iy = Math.min(b.y1, r.y1) - Math.max(b.y0, r.y0);
+      return ix > 0 && iy > 0 && ix * iy >= 0.5 * (b.x1 - b.x0) * (b.y1 - b.y0);
+    });
+    asks = asks.filter((a) => a.region || !a.lines.every(inRegion));
+    lines = lines.filter((l) => !inRegion(l));
     const top = (a) => (a.region ? a.region.y0 : Math.min(...a.lines.map((l) => l.bbox.y0)));
     asks.sort((a, b) => top(a) - top(b) || (b.region ? 1 : 0) - (a.region ? 1 : 0));
 

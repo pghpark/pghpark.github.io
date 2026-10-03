@@ -124,7 +124,7 @@ On a phone, every export opens the system share sheet (**Save to Files**, **Save
 
 ## Keep or convert
 
-After reading, the app asks about each doubtful part in turn: a cut-out of the original, what was read, and two big buttons. **Keep all the rest as picture** (or Esc) ends the questions.
+After reading, the app asks about each doubtful part in turn: a cut-out of the original, what was read, and big buttons. Everything except text on a coloured box also offers **Remove (fill with the background)**: the area is painted over from the colours around it, one step for **Undo**, and **← Back** puts it back. **Keep all the rest as picture** (or Esc) ends the questions.
 
 | What | Found by | Buttons |
 |---|---|---|
@@ -134,6 +134,8 @@ After reading, the app asks about each doubtful part in turn: a cut-out of the o
 | **Text on a coloured box or shape** | Most of the reading box is one colour that differs clearly from just outside and a little further out, with lettering of a third colour (追根溯源 on its blue panel); an enclosed character (第④屆); a weekday disc (㊁). Converted text is measured, coloured and erased against the panel, so the panel stays. | Keep as picture / Convert to text |
 | **Hard to read** | Read below 50% confidence (usually logos or tiny print). | Keep as picture / Convert to text |
 | **Text inside a picture** | A sign, banner or sheet of paper: the small plain patch it sits on doesn't run on into the poster's background (2.1% of ordinary lines on 40 benchmark posters look like that). Also a short reading (up to 6 characters) with no Chinese that stands out only weakly (contrast under 250; printed dates over illustrations are 450 and more) in busy artwork: more than 10% of neighbouring pixel pairs around it step clearly in brightness (carvings, ornaments, foliage read as "15100"; printed text sits at 0–7%). | Keep as picture / Convert to text |
+| **Watermark or app mark** | A tool's name or tag anywhere (CapCut, Canva, Midjourney, 剪映, 豆包, 即夢, 美圖, "AI generated", "Made with"…), or faint, see-through text tucked into a corner (within 18% of the width and 12% of the height). Corner position alone isn't enough: organiser and venue labels sit in corners too. | Keep as picture / Convert to text / Remove |
+| **Icon or symbol beside text** | A small shape just before a line (© or a globe before a web address, Facebook, a phone, a pin): mostly one shape, level with the line (within 0.15 line-heights), 0.6 to 1.2 line-heights tall, roughly square (0.6 to 1.6), within half a line-height of the text. On real posters icons measured 0.66–0.93 tall, 0.85–1.14 square, level within 0.03; confetti, artwork strokes and panel edges each break a rule. A doubtful reading of the icon itself ("0O" for ©) isn't asked about again. | Keep as it is / Import new image / Remove |
 | **Faint or see-through text** | The letters stand out weakly from their own box (colour distance under 100; printed text is 160 or more): usually a watermark. It can't be painted out cleanly. A heading split off its line by colour is never asked about here. | Keep as picture / Convert to text |
 
 **Import new image** opens the photo picker; the image goes in as a movable, resizable box fitted inside the area, stored at most twice the area's size (sharp in 2× exports, light in saved templates), and the old picture under it is painted out (**Undo** brings it back). Any converted line can be put back as picture with **Restore original (keep as picture)** in the pop-up editor.

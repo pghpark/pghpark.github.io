@@ -635,6 +635,7 @@ h2[data-tip], .field[data-tip] > span:first-child, .check[data-tip] > span, .men
 .ask-snip canvas { display: block; max-width: 100%; height: auto; max-height: 40vh; object-fit: contain; }
 .ask-read { margin-top: 10px !important; font-size: 16px; overflow-wrap: anywhere; }
 .ask-dialog footer.ask-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.ask-dialog .ask-remove { grid-column: 1 / -1; } /* full width under Keep / Convert */
 .ask-btn {
   min-height: 56px;
   font-size: 18px;
