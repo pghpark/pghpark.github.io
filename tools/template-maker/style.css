@@ -152,6 +152,10 @@ body {
 .btn.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 .btn.wide { width: 100%; }
 .icon { border: 0; background: none; color: var(--muted); cursor: pointer; font: inherit; padding: 4px 6px; border-radius: 6px; }
+/* Close (✕) on windows: a big, easy round target. */
+dialog header [data-close] { display: grid; place-items: center; flex-shrink: 0; width: 44px; height: 44px; padding: 0; margin-left: auto; border-radius: 50%; background: var(--bg); border: 1px solid var(--line); color: var(--text); font-size: 22px; line-height: 1; touch-action: manipulation; }
+dialog header [data-close]:hover { border-color: var(--accent); }
+dialog header [data-close]:active { transform: scale(0.92); }
 .icon:hover { color: var(--text); background: var(--bg); }
 .icon.danger:hover { color: var(--danger); }
 
