@@ -1,7 +1,7 @@
 // Interface language: English (UK) and Traditional Chinese (繁體中文).
 //
 // Choice order: ?lang=en|zh in the URL → last choice saved in this browser →
-// the browser's language (any Chinese → 繁體中文) → English.
+// 繁體中文 (the default for everyone).
 //
 // In index.html, mark text with:
 //   data-i18n="key"             → textContent
@@ -508,7 +508,7 @@ function detectLang() {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved && LANGS[saved]) return saved;
   } catch { /* storage blocked */ }
-  return (navigator.languages || [navigator.language]).some((l) => /^zh\b/i.test(l || '')) ? 'zh' : 'en';
+  return 'zh'; // Traditional Chinese unless chosen otherwise (EN | 繁中 is remembered)
 }
 
 let current = detectLang();

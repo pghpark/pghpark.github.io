@@ -12,7 +12,7 @@ there is no server to maintain.
 
 ## Languages
 
-The interface is in **English (UK)** or **繁體中文**. Use the **EN | 繁中** toggle next to the app name. The app remembers your choice in that browser. On a first visit it picks Chinese for Chinese-language browsers and English otherwise.
+The interface is in **English (UK)** or **繁體中文**. Use the **EN | 繁中** toggle next to the app name. The app remembers your choice in that browser. It starts in 繁體中文 for everyone (including the first-visit install steps) until English is chosen; `?lang=en` in the link also opens it in English.
 
 Hover over any setting, tool or export format (or press and hold it on a phone) to see a tooltip explaining what it does, in either language.
 
