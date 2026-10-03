@@ -153,7 +153,7 @@ async function load(report) {
     if (!entries) throw lastError;
     const chars = ['', ...entries, ' '];
     if (!self.OpenCC) await loadScript(OPENCC_JS).catch(() => {});
-    const cn2tw = self.OpenCC ? OpenCC.Converter({ from: 'cn', to: 'tw' }) : (t) => t;
+    const cn2tw = self.OpenCC ? self.OpenCC.Converter({ from: 'cn', to: 'tw' }) : (t) => t;
     return { files, chars, cn2tw };
   })().catch((e) => { loading = null; throw e; });
   return loading;

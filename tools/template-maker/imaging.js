@@ -6,7 +6,7 @@ import { t } from './i18n.js';
 // worth). On a phone, 2400 px: a 4032 px photo at full size peaked at 1.8 GB
 // against 1.26 GB, near where iPhone Safari closes the tab. 2400 px is still
 // ample for text; reading works on its own smaller copies either way.
-export const MAX_SIDE = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches ? 2400 : 4096;
+const MAX_SIDE = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches ? 2400 : 4096;
 
 export function makeCanvas(w, h) {
   const c = document.createElement('canvas');
@@ -21,7 +21,7 @@ export function cloneCanvas(src) {
   return c;
 }
 
-export function loadImage(src) {
+function loadImage(src) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
@@ -511,8 +511,8 @@ export function findQRCodes(canvas) {
   const runsAt = (x, y, dx, dy) => {
     const inside = (a, b) => a >= 0 && b >= 0 && a < W && b < H;
     if (!dark(x, y)) return null;
-    const count = (sx, sy, want, max) => { let n = 0; while (inside(sx, sy) && dark(sx, sy) === want && n < max) { n++; sx += dx * sgn; sy += dy * sgn; } return [n, sx, sy]; };
     let sgn = 1; const r = [0, 0, 0, 0, 0];
+    const count = (sx, sy, want, max) => { let n = 0; while (inside(sx, sy) && dark(sx, sy) === want && n < max) { n++; sx += dx * sgn; sy += dy * sgn; } return [n, sx, sy]; };
     // centre run both ways
     let a = 0; let px = x; let py = y; while (inside(px, py) && dark(px, py)) { a++; px -= dx; py -= dy; }
     let b = 0; let qx = x + dx; let qy = y + dy; while (inside(qx, qy) && dark(qx, qy)) { b++; qx += dx; qy += dy; }
@@ -781,7 +781,7 @@ export function textColorByContrast(canvas, box, vertical = false) {
 }
 
 /** Guess the text colour: pixels inside the box that differ most from the background. */
-export function estimateTextColor(canvas, box) {
+function estimateTextColor(canvas, box) {
   const bg = sampleRing(canvas, box, 2);
   const r = clampRect(canvas, box.x0, box.y0, box.x1, box.y1);
   const w = r.x1 - r.x0;

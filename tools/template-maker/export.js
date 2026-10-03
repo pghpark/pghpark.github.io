@@ -66,7 +66,7 @@ function colorOf(obj) {
  * Where Fabric draws each line of a text object, as baseline points in canvas
  * pixels. Mirrors Text._renderTextCommon / _renderChars in Fabric 7.
  */
-export function textGeometry(obj) {
+function textGeometry(obj) {
   const m = obj.calcTransformMatrix();
   const lines = [];
   let acc = 0;
@@ -126,7 +126,7 @@ export async function exportSVG(canvas) {
 function glyphsReadable(bytes) {
   try {
     const font = fontkit.create(bytes);
-    for (let g = 0; g < font.numGlyphs; g++) font.getGlyph(g).cbox; // eslint-disable-line no-unused-expressions
+    for (let g = 0; g < font.numGlyphs; g++) font.getGlyph(g).cbox; // reading each glyph's box throws on a broken font
     return true;
   } catch {
     return false;

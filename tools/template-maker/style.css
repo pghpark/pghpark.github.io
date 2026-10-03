@@ -129,45 +129,42 @@ body {
 .account { display: inline-flex; align-items: center; gap: 6px; }
 
 /* Buttons & fields */
+/* Every button looks pressable: chunky, a solid edge underneath that it sinks
+   onto when pressed, and springs back. Main actions blue, deleting red, the
+   rest outlined. */
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 4px;
-  padding: 6px 12px;
-  border: 1px solid var(--line);
+  min-height: 44px;
+  padding: 8px 14px;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 40%, var(--line));
   border-radius: var(--radius);
+  box-shadow: 0 3px 0 color-mix(in srgb, var(--accent) 30%, var(--line));
   background: var(--panel);
   color: inherit;
   font: inherit;
+  font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
   user-select: none;
+  touch-action: manipulation; /* no double-tap-to-zoom delay, so Undo can be tapped quickly */
+  transition: transform 0.12s cubic-bezier(0.3, 1.6, 0.5, 1), box-shadow 0.12s ease, background-color 0.2s ease, border-color 0.2s ease;
 }
 .btn:hover:not(:disabled) { border-color: var(--accent); }
-/* A firm press: the button sinks in while held and springs back. */
-.btn { transition: transform 0.12s cubic-bezier(0.3, 1.6, 0.5, 1), box-shadow 0.12s ease, background-color 0.2s ease, border-color 0.2s ease; }
 .btn:active:not(:disabled) {
-  transform: translateY(2px) scale(0.95);
-  box-shadow: inset 0 3px 6px rgba(0, 0, 0, 0.28);
+  transform: translateY(3px);
+  box-shadow: 0 0 0 transparent, inset 0 3px 6px rgba(0, 0, 0, 0.25);
   transition-duration: 0.04s;
 }
 /* Save confirmed: the button itself says so for a moment. */
 .btn.done, .btn.done:hover { background: var(--ok); border-color: var(--ok); color: #fff; }
-.btn:disabled, summary.btn[disabled] { opacity: 0.45; cursor: not-allowed; }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
-.btn.danger { color: var(--danger); }
-.btn.link { border: 0; background: none; padding: 0 4px; color: var(--accent); }
-.btn.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.btn.primary, .btn.active { background: var(--accent); border-color: var(--accent); color: var(--accent-text); box-shadow: 0 3px 0 color-mix(in srgb, var(--accent) 60%, #000); }
+.btn.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); box-shadow: 0 3px 0 color-mix(in srgb, var(--danger) 30%, var(--line)); }
+.btn.link { color: var(--accent); }
+.btn:disabled, summary.btn[disabled] { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
 .btn.wide { width: 100%; }
-/* Every button looks pressable: chunky, a solid edge underneath that it sinks
-   onto when pressed. Main actions blue, deleting red, the rest outlined. */
-.btn { min-height: 44px; padding: 8px 14px; font-weight: 600; border-width: 1.5px; border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); box-shadow: 0 3px 0 color-mix(in srgb, var(--accent) 30%, var(--line)); }
-.btn:active:not(:disabled) { transform: translateY(3px); box-shadow: 0 0 0 transparent, inset 0 3px 6px rgba(0, 0, 0, 0.25); }
-.btn.primary, .btn.active { box-shadow: 0 3px 0 color-mix(in srgb, var(--accent) 60%, #000); }
-.btn.danger { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); box-shadow: 0 3px 0 color-mix(in srgb, var(--danger) 30%, var(--line)); }
-.btn.link { border: 1.5px solid color-mix(in srgb, var(--accent) 40%, var(--line)); background: var(--panel); padding: 8px 14px; color: var(--accent); }
-.btn:disabled, summary.btn[disabled] { box-shadow: none; }
 .icon { border: 0; background: none; color: var(--muted); cursor: pointer; font: inherit; padding: 4px 6px; border-radius: 6px; }
 /* Close (✕) on windows: a big, easy round target. */
 dialog header [data-close] { display: grid; place-items: center; flex-shrink: 0; width: 44px; height: 44px; padding: 0; margin-left: auto; border-radius: 50%; background: var(--bg); border: 1.5px solid color-mix(in srgb, var(--accent) 40%, var(--line)); box-shadow: 0 3px 0 color-mix(in srgb, var(--accent) 30%, var(--line)); color: var(--text); font-size: 22px; font-weight: 700; line-height: 1; cursor: pointer; touch-action: manipulation; }
@@ -210,11 +207,11 @@ dialog header [data-close]:active { transform: translateY(3px); box-shadow: inse
 .menu summary { list-style: none; }
 .menu summary::-webkit-details-marker { display: none; }
 .menu-body {
+  min-width: 320px;
   position: absolute;
   right: 0;
   top: calc(100% + 4px);
   z-index: 20;
-  min-width: 260px;
   padding: 6px;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -372,7 +369,6 @@ dialog form, dialog > p { padding: 12px 16px; margin: 0; }
 .template-del:active { transform: translateY(3px); box-shadow: inset 0 3px 6px rgba(0, 0, 0, 0.25); }
 .template-del svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .template-del:hover { border-color: var(--danger); }
-.template-del:active { transform: scale(0.92); }
 
 .toast {
   cursor: pointer; /* tap to close */
@@ -403,9 +399,11 @@ dialog form, dialog > p { padding: 12px 16px; margin: 0; }
   .row-break { display: block; flex-basis: 100%; height: 0; }
   .doc-name { flex-basis: 100%; min-width: 0; max-width: none; }
   .zoom-field select { max-width: 96px; padding-left: 6px; padding-right: 4px; }
-  .zoom-label { display: none; } /* the menu itself shows Fit / 100%… */
+  .zoom-label { display: none; } /* the menu itself shows Whole poster / 100%… */
   .workspace { flex-direction: column; }
   .stage-area { min-height: 55vh; }
+  /* The page scrolls as a whole here: a drag on the poster passes on to it. */
+  .stage { overscroll-behavior: auto; }
   .panel { width: auto; border-left: 0; border-top: 1px solid var(--line); }
   .actions { margin-left: 0; }
 }
@@ -471,8 +469,6 @@ dialog form, dialog > p { padding: 12px 16px; margin: 0; }
 .btn.grow { flex: 1; }
 .wipe-btn { gap: 8px; min-height: 44px; font-weight: 600; }
 .wipe-btn .ico { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-/* No double-tap-to-zoom delay, so Undo can be tapped quickly. */
-.btn { touch-action: manipulation; }
 .toolbar-sep { width: 1px; align-self: stretch; margin: 4px 2px; background: var(--line); flex-shrink: 0; }
 
 /* Help tooltips (data-tip) */
@@ -498,9 +494,7 @@ h2[data-tip], .field[data-tip] > span:first-child, .check[data-tip] > span, .men
   pointer-events: none;
 }
 .menu-row { display: flex; align-items: center; gap: 4px; padding-right: 6px; }
-.menu-row > button[data-export] { flex: 1; }
-.menu-body { min-width: 320px; }
-.menu-row > button[data-export] { white-space: nowrap; }
+.menu-row > button[data-export] { flex: 1; white-space: nowrap; }
 .menu-option .label-row { flex: 1; }
 
 /* Language toggle (EN | 繁中) */
@@ -585,8 +579,7 @@ h2[data-tip], .field[data-tip] > span:first-child, .check[data-tip] > span, .men
 }
 .qe-btn[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: var(--accent-text); box-shadow: 0 3px 0 color-mix(in srgb, var(--accent) 60%, #000); }
 .qe-btn:active { transform: translateY(3px); box-shadow: inset 0 3px 6px rgba(0, 0, 0, 0.25); }
-.qe-btn.danger { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); box-shadow: 0 3px 0 color-mix(in srgb, var(--danger) 30%, var(--line)); }
-.qe-btn.danger { color: var(--danger); margin-left: auto; }
+.qe-btn.danger { color: var(--danger); margin-left: auto; border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); box-shadow: 0 3px 0 color-mix(in srgb, var(--danger) 30%, var(--line)); }
 .qe-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vertical-align: middle; }
 .qe-row input[type=number] {
   width: 56px;

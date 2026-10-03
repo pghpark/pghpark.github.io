@@ -224,9 +224,13 @@ function zoomAround(z, clientX, clientY) {
   }, { passive: false });
 })();
 
-// Phones: one finger always moves the view, like a photo viewer (a flick
-// keeps gliding), and never drags a text box by accident (the layout is
-// locked; see applyLock). A tap selects the box under it and opens the pop-up
+// Phones: one finger always moves the view, like a photo viewer, and never
+// drags a text box by accident (the layout is locked; see applyLock). The
+// browser scrolls it natively, with its own momentum: scrolling the page from
+// script made iPhone Safari's address bar slide in and out mid-gesture, and
+// the screen jumped. Only while a box is unlocked for moving, or an area is
+// being wiped, does the app take the finger over (and scroll from script when
+// the finger is off the box). A tap selects the box under it and opens the pop-up
 // editor; tapping the selected text again types into it. A double tap on an
 // empty spot zooms in there, and again back to the whole poster. Pinch zooms.
 // A box unlocked with Move / resize is dragged as usual.
@@ -256,6 +260,16 @@ function zoomAround(z, clientX, clientY) {
     window.scrollBy(-(dx + (stage.scrollLeft - sl)), -(dy + (stage.scrollTop - st)));
   };
   const fitZoom = () => Math.min(1, (stage.clientWidth - 32) / canvas.getWidth(), (stage.clientHeight - 32) / canvas.getHeight());
+  // Native scrolling unless the finger is needed (decided before a touch starts).
+  const upper = canvas.upperCanvasEl;
+  const native = () => upper.style.touchAction !== 'none';
+  const syncTouchAction = () => {
+    const own = state.tool !== 'select' || !!canvas.getActiveObject()?.moveUnlocked;
+    const want = own ? 'none' : 'pan-x pan-y';
+    if (upper.style.touchAction !== want) upper.style.touchAction = want;
+  };
+  // (TOUCH is declared further down the file.)
+  if (matchMedia('(pointer: coarse)').matches) { canvas.on('after:render', syncTouchAction); syncTouchAction(); }
   window.addEventListener('pointerdown', (e) => {
     if (e.pointerType !== 'touch' || state.tool !== 'select' || !hasDoc() || e.target !== canvas.upperCanvasEl) return;
     cancelAnimationFrame(glide);
@@ -268,6 +282,7 @@ function zoomAround(z, clientX, clientY) {
     if (!pan || e.pointerId !== pan.id) return;
     e.stopPropagation();
     if (!pan.moved && Math.hypot(e.clientX - pan.x0, e.clientY - pan.y0) <= TAP_SLOP) return;
+    if (native()) { pan.moved = true; return; } // the browser is scrolling
     if (!pan.moved) { pan.moved = true; pan.x = e.clientX; pan.y = e.clientY; return; }
     const dx = e.clientX - pan.x; const dy = e.clientY - pan.y;
     const now = Date.now(); const dt = Math.max(1, now - pan.t);
@@ -280,6 +295,7 @@ function zoomAround(z, clientX, clientY) {
     e.stopPropagation();
     const p = pan; pan = null;
     if (p.moved) {
+      if (native()) return; // the browser's own momentum
       // Flick: keep gliding, slowing down.
       let vx = p.vx * 16; let vy = p.vy * 16; // px per frame
       if (Date.now() - p.t > 80 || e.type === 'pointercancel') return;
@@ -859,7 +875,14 @@ function harmoniseBlocks(items) {
       const sizes = members.map((x) => x.o.fontSize).sort((a, b) => a - b);
       const size = sizes[sizes.length >> 1];
       const agree = sizes.filter((v) => Math.max(v, size) / Math.min(v, size) <= 1.15).length;
-      if (sizes[sizes.length - 1] / sizes[0] <= 1.2 || (members.length >= 3 && agree >= (2 / 3) * members.length)) {
+      // Or the letters themselves are the same height in the photo: that
+      // doesn't depend on how this browser measures the font (each line's size
+      // estimate can wobble with the browser's text measuring).
+      const hs = members.map((x) => x.b.y1 - x.b.y0).sort((a, b) => a - b);
+      const hMid = hs[hs.length >> 1];
+      const hAgree = hs.filter((v) => Math.max(v, hMid) / Math.min(v, hMid) <= 1.15).length;
+      if (sizes[sizes.length - 1] / sizes[0] <= 1.2 || (members.length >= 3 && agree >= (2 / 3) * members.length)
+        || hs[hs.length - 1] / hs[0] <= 1.2 || (members.length >= 3 && hAgree >= (2 / 3) * members.length)) {
         for (const x of members) fitToBox(x.o, size);
       }
     }
@@ -882,8 +905,12 @@ function mergeParagraphs(objs, blocks) {
     if (block.length < 2) continue;
     const rows = [...block].sort((a, b) => a.fitBox.y0 - b.fitBox.y0);
     const f = rows[0];
+    // One style, judged by the photo: the same letter height (within 15%), not
+    // the exact size each line was fitted at (a line squeezed into its width
+    // comes out a little smaller, by different amounts in different browsers).
+    const hMid = med(rows.map((o) => o.fitBox.y1 - o.fitBox.y0));
     const same = rows.every((o) => o.fontFamily === f.fontFamily && Number(o.fontWeight) === Number(f.fontWeight)
-      && o.fill === f.fill && Math.abs(o.fontSize - f.fontSize) < 0.01 && !o.vertical && !o.text.includes('\n'));
+      && o.fill === f.fill && Math.abs((o.fitBox.y1 - o.fitBox.y0) / hMid - 1) <= 0.15 && !o.vertical && !o.text.includes('\n'));
     // Stacked: each line starts below the previous one's middle.
     const stacked = rows.every((o, i) => i === 0 || o.fitBox.y0 >= (rows[i - 1].fitBox.y0 + rows[i - 1].fitBox.y1) / 2);
     if (!same || !stacked) continue;
@@ -903,7 +930,7 @@ function mergeParagraphs(objs, blocks) {
   function mergeRun(rows, out) {
     if (rows.length < 2) return;
     const f = rows[0];
-    const fs = f.fontSize;
+    const fs = med(rows.map((o) => o.fontSize));
     const charSpacing = med(rows.map((o) => o.charSpacing || 0));
     // A first line that starts further in than the rest: a whole number of
     // characters in (a two-character indent, or the rest of a line led by a
@@ -922,13 +949,31 @@ function mergeParagraphs(objs, blocks) {
       if (k > 12 || Math.abs(inset - k * em) > 0.35 * em) { mergeRun(rest, out); return; }
       indent = '\u3000'.repeat(k);
     }
-    const base = rows.map((o) => o.top + BASELINE * fs);
+    // At the shared size and letter spacing every line must still be about as
+    // wide as its own fitted line (within 6%), or the paragraph's lines would
+    // stick out past, or fall short of, the original lines: keep them separate.
+    const widthAt = (o) => {
+      const gaps = Math.max(0, [...o.text].length - 1);
+      const glyphs = ((o.width - (gaps * (o.charSpacing || 0) * o.fontSize) / 1000) * 100) / o.fontSize; // at size 100
+      return (glyphs * fs) / 100 + (gaps * charSpacing * fs) / 1000;
+    };
+    if (rows.some((o) => Math.abs(widthAt(o) / o.width - 1) > 0.06)) return;
+    // Two lines give no majority to say which size is right: only when they
+    // were fitted at nearly the same size (a title over a subtitle stays two boxes).
+    if (rows.length === 2 && rows.some((o) => Math.abs(o.fontSize / fs - 1) > 0.04)) return;
+    const base = rows.map((o) => o.top + BASELINE * o.fontSize);
     const steps = rows.slice(1).map((o, i) => base[i + 1] - base[i]);
     const lineHeight = Math.min(3, Math.max(0.5, med(steps) / (1.13 * fs)));
     const placed = indent ? rest : rows; // an indented first line says nothing about the alignment
     const lefts = placed.map((o) => o.left); const rights = placed.map((o) => o.left + o.width); const mids = placed.map((o) => o.left + o.width / 2);
-    const align = indent ? 'left' : spread(lefts) <= Math.min(spread(mids), spread(rights)) + 0.3 * fs ? 'left'
-      : spread(mids) <= spread(rights) ? 'center' : 'right';
+    // Two lines: whichever edge lines up best, placed at their average (with
+    // a lean towards left, a centred two-line title came out left-aligned and
+    // its second line moved). Three or more: left unless clearly not.
+    const two = placed.length === 2;
+    const align = indent ? 'left'
+      : spread(lefts) <= Math.min(spread(mids), spread(rights)) + (two ? 0 : 0.3 * fs) ? 'left'
+        : spread(mids) <= spread(rights) ? 'center' : 'right';
+    const at = (vals) => (two ? (vals[0] + vals[1]) / 2 : med(vals));
     const union = (key) => ({
       x0: Math.min(...rows.map((o) => o[key].x0)), y0: Math.min(...rows.map((o) => o[key].y0)),
       x1: Math.max(...rows.map((o) => o[key].x1)), y1: Math.max(...rows.map((o) => o[key].y1)),
@@ -938,8 +983,9 @@ function mergeParagraphs(objs, blocks) {
       lineHeight, textAlign: align, charSpacing,
     });
     para.initDimensions();
-    const left = align === 'left' ? med(lefts) : align === 'center' ? med(mids) - para.width / 2 : med(rights) - para.width;
-    para.set({ left, top: f.top, eraseBox: union('eraseBox'), fitBox: union('fitBox'), autoFit: false });
+    const left = align === 'left' ? at(lefts) : align === 'center' ? at(mids) - para.width / 2 : at(rights) - para.width;
+    // The first line's baseline stays where that line was fitted.
+    para.set({ left, top: f.top + BASELINE * (f.fontSize - fs), eraseBox: union('eraseBox'), fitBox: union('fitBox'), autoFit: false });
     para.ocrBox = union('ocrBox');
     para.setCoords();
     for (const o of rows) out.delete(o);
@@ -1554,6 +1600,7 @@ $('#propVertical').addEventListener('change', (e) => setVertical(e.target.checke
 /* ---------------- Pop-up editor next to the selected text ---------------- */
 
 let transforming = false;
+let comparing = false; // Hold to see original is pressed (see setComparing)
 function renderQuickEdit() {
   const box = $('#quickEdit');
   const o = active() || activeImage();
@@ -1710,7 +1757,6 @@ function renderLayers() {
 
 /* ---------------- Hold to see the original photo ---------------- */
 
-let comparing = false;
 function setComparing(on) {
   if (on === comparing || !state.original) return;
   comparing = on;
